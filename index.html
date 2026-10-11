@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Draft vs PickNet</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Draft vs PickNet</h1>
+    <div class="controls">
+      <label>Set <select id="set"></select></label>
+      <label>Bots
+        <select id="style">
+          <option value="0">Greedy (top pick)</option>
+          <option value="1">Human-like (sampled)</option>
+        </select>
+      </label>
+      <label>Drafter profile
+        <select id="skill">
+          <option value="typical">Typical 17Lands drafter</option>
+          <option value="strong">Strong (62%+ win rate)</option>
+        </select>
+      </label>
+      <button id="new" disabled>New draft</button>
+      <button id="undo" class="ghost" disabled title="Undo your last pick (⌘Z / Ctrl+Z)">Undo pick</button>
+    </div>
+    <div id="status" class="status">Loading PickNet…</div>
+  </header>
+
+  <main>
+    <section id="pick-view" hidden>
+      <div class="bar">
+        <h2 id="pick-title"></h2>
+        <button id="confirm" disabled>Select a card</button>
+        <label class="toggle"><input type="checkbox" id="show"> Show PickNet's view</label>
+        <label class="toggle"><input type="checkbox" id="god"> God's-eye view</label>
+        <button id="auto" class="ghost">Let PickNet pick</button>
+        <button id="rest" class="ghost">Autodraft the rest</button>
+      </div>
+      <div id="pack" class="pack"></div>
+    </section>
+
+    <section id="god-view" hidden>
+      <div class="bar">
+        <h2>The table</h2>
+        <p id="god-flow"></p>
+      </div>
+      <div id="god-table" class="god"></div>
+    </section>
+
+    <section id="end-view" hidden>
+      <div class="bar">
+        <h2>Draft complete</h2>
+        <p id="agree"></p>
+      </div>
+      <div id="seat-tabs" class="tabs"></div>
+    </section>
+
+    <section id="pool-view" hidden>
+      <div class="bar">
+        <h2 id="pool-title">Your picks</h2>
+        <span id="pool-colors" class="chips"></span>
+      </div>
+      <div id="pool" class="pool"></div>
+    </section>
+
+    <section id="log-view" hidden>
+      <h2>Your picks vs PickNet</h2>
+      <table id="log"></table>
+    </section>
+
+    <p id="intro" class="intro">PickNet is a transformer trained on 17Lands drafts to predict which card a human takes.
+      It runs entirely in your browser and drives the 7 bots at the table. Packs are real opening packs from 17Lands drafts.</p>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,87 @@
+[
+ {
+  "code": "BLB",
+  "name": "Bloomburrow",
+  "n_picks": 13
+ },
+ {
+  "code": "DFT",
+  "name": "Aetherdrift",
+  "n_picks": 14
+ },
+ {
+  "code": "DSK",
+  "name": "Duskmourn: House of Horror",
+  "n_picks": 14
+ },
+ {
+  "code": "ECL",
+  "name": "Lorwyn Eclipsed",
+  "n_picks": 13
+ },
+ {
+  "code": "EOE",
+  "name": "Edge of Eternities",
+  "n_picks": 13
+ },
+ {
+  "code": "FDN",
+  "name": "Foundations",
+  "n_picks": 14
+ },
+ {
+  "code": "FIN",
+  "name": "Final Fantasy",
+  "n_picks": 14
+ },
+ {
+  "code": "LCI",
+  "name": "The Lost Caverns of Ixalan",
+  "n_picks": 15
+ },
+ {
+  "code": "MKM",
+  "name": "Murders at Karlov Manor",
+  "n_picks": 13
+ },
+ {
+  "code": "MOM",
+  "name": "March of the Machine",
+  "n_picks": 15
+ },
+ {
+  "code": "MSH",
+  "name": "Marvel Super Heroes",
+  "n_picks": 14
+ },
+ {
+  "code": "OTJ",
+  "name": "Outlaws of Thunder Junction",
+  "n_picks": 14
+ },
+ {
+  "code": "SOS",
+  "name": "Secrets of Strixhaven",
+  "n_picks": 14
+ },
+ {
+  "code": "TDM",
+  "name": "Tarkir: Dragonstorm",
+  "n_picks": 14
+ },
+ {
+  "code": "TLA",
+  "name": "Avatar: The Last Airbender",
+  "n_picks": 14
+ },
+ {
+  "code": "TMT",
+  "name": "Teenage Mutant Ninja Turtles",
+  "n_picks": 14
+ },
+ {
+  "code": "WOE",
+  "name": "Wilds of Eldraine",
+  "n_picks": 14
+ }
+]
