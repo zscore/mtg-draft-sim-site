@@ -3,9 +3,10 @@ per-draft context vectors for the model.
 
     python tools/build_data.py [SET ...]
 
-Writes data/sets.json and data/{SET}.json. The collation (tools/collation.py) is resolved to card ids
-here: each sheet's Scryfall query, matched by name to the set's 17Lands card list. Scryfall lookups
-are cached in tools/scryfall_cache.json and tools/scryfall_sheets.json.
+Writes data/sets.json and data/{SET}.json, the cards with their mana facts (tools/mana_facts.py). The
+collation (tools/collation.py) is resolved to card ids here: each sheet's Scryfall query, matched by
+name to the set's 17Lands card list. Scryfall lookups are cached in tools/scryfall_cache.json and
+tools/scryfall_sheets.json.
 """
 import json
 import re
@@ -20,6 +21,7 @@ from pathlib import Path
 import numpy as np
 
 from collation import SETS, per_card
+from mana_facts import add_mana_facts
 
 DATA = Path("/Users/zblanton/Documents/repos/mtg-data/data")  # shared 17Lands data (mtg-data)
 SHARDS = DATA / "features" / "picks_all"
@@ -176,6 +178,7 @@ def main():
         out["collation"], images = resolve_collation(code, out["cards"], sheet_cache)
         for i, img in images.items():
             out["cards"][i]["img"] = img
+        add_mana_facts(out["cards"])
         SHEET_CACHE.write_text(json.dumps(sheet_cache, indent=0))
         (SITE / "data" / f"{code}.json").write_text(json.dumps(out, separators=(",", ":")))
         subprocess.run(["node", str(SITE / "tools" / "fit_balance.mjs"), code], check=True)

@@ -22,7 +22,7 @@ h1 { font-size: 18px; margin: 0; }
 h2 { font-size: 16px; margin: 0; }
 .controls { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
 label { font-size: 13px; color: var(--muted); display: inline-flex; gap: 6px; align-items: center; }
-select, button { font: inherit; font-size: 14px; color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+select, button, input[type="text"] { font: inherit; font-size: 14px; color: var(--ink); background: var(--bg); border: 1px solid var(--line);
   border-radius: 6px; padding: 5px 9px; }
 button { cursor: pointer; background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
 button.ghost { background: transparent; color: var(--accent); }
@@ -106,12 +106,21 @@ header .tabs button { padding: 4px 12px; }
 .rate { position: absolute; right: 4px; top: 4px; background: rgba(0, 0, 0, .78); color: #fff; font-size: 11px;
   font-weight: 700; padding: 0 5px; border-radius: 8px; font-variant-numeric: tabular-nums; display: none; }
 .show-rate .rate { display: block; }
-#deck .card, #side .card { cursor: pointer; }
-#deck:empty::before { content: "No cards in the deck yet."; color: var(--muted); font-size: 14px; }
-.basics { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 12px; align-items: center; font-size: 14px; }
-.basics .land { display: inline-flex; gap: 6px; align-items: center; }
-.basics .land i { width: 11px; height: 11px; border-radius: 50%; border: 1px solid rgba(0, 0, 0, .2); }
-.basics button { padding: 0 8px; font-size: 14px; line-height: 22px; }
+.show-rate .rate[hidden] { display: none; }
+.rate.neg { background: rgba(120, 30, 30, .85); }
+.deck .card, .side .card { cursor: pointer; }
+.deck:empty::before { content: "No cards in the deck yet."; color: var(--muted); font-size: 14px; }
+.deck-score { margin: -4px 0 12px; font-size: 14px; font-variant-numeric: tabular-nums; }
+.deck-score:empty { display: none; }
+.basics { display: flex; flex-wrap: wrap; gap: 6px 8px; margin-bottom: 12px; align-items: center; font-size: 14px; color: var(--muted); }
+.basics button { display: inline-flex; gap: 6px; align-items: center; padding: 0 8px; font-size: 13px; line-height: 22px; }
+.basics i { width: 11px; height: 11px; border-radius: 50%; border: 1px solid rgba(0, 0, 0, .2); }
+/* a stack's copy count (the pack view's badge), its label and a basic's − / +, side by side at the top right */
+.card .tags { position: absolute; right: 4px; top: 4px; display: flex; gap: 3px; align-items: center; }
+.card .tags .rate, .card .tags .copies { position: static; }
+.card .basic-ctl { display: flex; gap: 2px; }
+.card .basic-ctl button { padding: 0 6px; font-size: 12px; line-height: 16px; border-radius: 8px; background: rgba(0, 0, 0, .78);
+  border-color: transparent; color: #fff; }
 .basics .n { min-width: 2ch; text-align: center; font-variant-numeric: tabular-nums; }
 
 footer { max-width: 1400px; margin: 0 auto; padding: 16px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
@@ -123,3 +132,5 @@ footer a { color: inherit; }
   header { position: static; }
   .seat-row { grid-template-columns: 1fr; }
 }
+#seed { width: 8ch; }
+#seed-used { font-variant-numeric: tabular-nums; }

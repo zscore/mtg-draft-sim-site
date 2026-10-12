@@ -1,5 +1,6 @@
 import { Draft, feeds, choices, sample, rateCards, SEATS, SLOTS } from './draft.js';
-import { openPack } from './packs.js';
+import { newSeed, openPack, seededRng } from './packs.js';
+import { DeckModel, buildDeck, cardValues, isLand, landCount, manaBase, utilityLands, BASICS } from './deck.js';
 
 const $ = (s) => document.querySelector(s);
 const COLORS = { W: 'White', U: 'Blue', B: 'Black', R: 'Red', G: 'Green' };
@@ -42,9 +43,10 @@ function run(f) {
 
 // history: every step's picks (seat 0 = you), so undo can replay the draft from its opening packs.
 let model, set, draft, openers, history, step, log, selected = null, busy = false, autodrafting = false;
-let draftId, draftTime, poolSeat = 0;
-// set is whichever set is on screen: the draft's (draftSet) or the sealed pool's (sealed.set).
-let mode = 'draft', draftSet, sealed;
+let draftId, draftTime, poolSeat = 0, draftBuilds = [];
+// set is whichever set is on screen: the draft's (draftSet) or the sealed pool's (sealed.set). sealed: the sealed
+// pool's deck builder.
+let mode = 'draft', draftSet, sealed, draftSeed;
 const setCache = {};
 const pref = {
   get(k, d) { try { return localStorage.getItem(`picknet.${k}`) ?? d; } catch { return d; } },
@@ -66,7 +68,8 @@ function beginStep() {
   const s = { t, choices: null };
   s.done = run(f).then((r) => {
     s.choices = draft.seats.map((seat, b) => choices(seat, t, r.logits, b));
-    s.botPicks = s.choices.map((ch, i) => (i === 0 ? null : sample(ch, temp).card));
+    // each bot's draw comes from the seed and the pick, so an undone and redone pick draws the same
+    s.botPicks = s.choices.map((ch, i) => (i === 0 ? null : sample(ch, temp, seededRng(`${draftSeed}:${t}:${i}`)).card));
     s.ms = r.ms;
     return s;
   });
@@ -79,8 +82,10 @@ async function newDraft() {
   set = draftSet = await loadSet($('#set').value);
   await ready;
   if (mode !== 'draft') return void ($('#new').disabled = false);
-  draft = new Draft(set);
+  draftSeed = takeSeed();
+  draft = new Draft(set, seededRng(draftSeed));
   openers = draft.openers.map((p) => p.slice());
+  showSeed();
   history = [];
   log = [];
   draftId = globalThis.crypto?.randomUUID?.().replace(/-/g, '') ??
@@ -97,7 +102,8 @@ function next() {
   if (draft.done) return mode === 'draft' && finish();
   step = beginStep();
   if (mode !== 'draft') return; // an autodraft carrying on while sealed is on screen
-  $('#end-view').hidden = $('#log-view').hidden = true;
+  $('#end-view').hidden = $('#log-view').hidden = $('#build-view').hidden = true;
+  draftBuilds = [];
   $('#pick-view').hidden = $('#pool-view').hidden = false;
   renderPack();
   renderGod();
@@ -336,23 +342,40 @@ function colorChips(ids) {
 }
 
 // A pile of picks in mana-value columns (lands first), each column sorted by colour (or by `order`,
-// a card id comparator). decorate(el, id) can add to each card.
-function pileCols(ids, small = false, decorate = null, order = null) {
+// a card id comparator). decorate(el, id) can add to each card. stack: one card per name with a ×n count.
+function pileCols(ids, small = false, decorate = null, order = null, stack = false) {
   const cols = new Map([['Lands', []], ['0–1', []], ['2', []], ['3', []], ['4', []], ['5', []], ['6+', []]]);
+  const copies = new Map();
   for (const id of ids) {
+    copies.set(id, (copies.get(id) || 0) + 1);
+    if (stack && copies.get(id) > 1) continue;
     const c = set.cards[id];
-    const key = /Land/.test(c.type) && !/Creature/.test(c.type) ? 'Lands' : c.cmc <= 1 ? '0–1' : c.cmc >= 6 ? '6+' : String(c.cmc);
+    const key = isLand(c) ? 'Lands' : c.cmc <= 1 ? '0–1' : c.cmc >= 6 ? '6+' : String(c.cmc);
     cols.get(key).push(id);
   }
   return [...cols].filter(([, v]) => v.length).map(([k, v]) => {
     const col = document.createElement('div');
     col.className = 'col';
     const h = document.createElement('h3');
-    h.textContent = `${k} (${v.length})`;
+    h.textContent = `${k} (${stack ? v.reduce((a, id) => a + copies.get(id), 0) : v.length})`;
     v.sort(order || ((a, b) => colorKey(set.cards[a]) - colorKey(set.cards[b])));
     col.append(h, ...v.map((id) => {
       const el = cardEl(id, small);
+      if (stack && copies.get(id) > 1) {
+        const n = document.createElement('span');
+        n.className = 'copies';
+        n.textContent = `×${copies.get(id)}`;
+        el.append(n);
+      }
       decorate?.(el, id);
+      // the count and any labels side by side at the top right, clear of the card's name
+      const tags = el.querySelectorAll(':scope > .copies, :scope > .rate, :scope > .basic-ctl');
+      if (tags.length) {
+        const box = document.createElement('span');
+        box.className = 'tags';
+        box.append(...tags);
+        el.append(box);
+      }
       return el;
     }));
     return col;
@@ -378,11 +401,12 @@ function finish() {
   tabs.replaceChildren(...draft.seats.map((_, i) => {
     const b = document.createElement('button');
     b.textContent = i === 0 ? 'You' : `Bot ${i}`;
-    b.onclick = () => { renderPool(i); [...tabs.children].forEach((x, j) => x.classList.toggle('on', j === i)); };
+    b.onclick = () => { renderPool(i); showDraftBuild(i); [...tabs.children].forEach((x, j) => x.classList.toggle('on', j === i)); };
     if (i === 0) b.classList.add('on');
     return b;
   }));
   renderPool(0);
+  showDraftBuild(0);
   const row = (cells, cls = '') => `<tr class="${cls}">${cells.map((c) => `<td>${c}</td>`).join('')}</tr>`;
   const esc = (s) => s.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
   $('#log').innerHTML = '<tr><th>Pick</th><th>You took</th><th>PickNet\'s rank</th><th>PickNet\'s top choice</th></tr>' +
@@ -461,103 +485,229 @@ async function copyDeck() {
   setTimeout(() => { btn.textContent = 'Copy decklist'; }, 1500);
 }
 
-// ---------------------------------------------------------------- sealed
+// ---------------------------------------------------------------- deck builder
 
-const SEALED_PACKS = 6, BASICS = { W: 'Plains', U: 'Island', B: 'Swamp', R: 'Mountain', G: 'Forest' };
-const isLand = (c) => /Land/.test(c.type) && !/Creature/.test(c.type);
+// One builder per pool: the sealed pool, and each seat's picks once a draft is done. A builder holds the deck
+// (card ids, basics apart), the sideboard, the deck model for the pool's event (null if the set has none) and
+// PickNet's ratings. It renders into a copy of #builder-tpl.
+const SEALED_PACKS = 6;
+// The five basics are the deck's own (b.basics), never in the sideboard; ones opened in packs are left out.
+const basicKey = (c) => (/Basic/.test(c.type) ? Object.keys(BASICS).find((k) => BASICS[k] === c.name) : undefined);
+const basicId = (s, k) => (s.basicIds ??= Object.fromEntries(Object.entries(s.cards)
+  .map(([id, c]) => [basicKey(c), +id]).filter(([key]) => key)))[k];
+const notBasic = (s) => (id) => !basicKey(s.cards[id]);
+const deckModels = {};
 
-async function openSealed() {
-  $('#seal-open').disabled = true;
-  try {
-    const s = await loadSet($('#set').value);
-    const pool = Array.from({ length: SEALED_PACKS }, () => openPack(s)).flat();
-    status(`Opened ${SEALED_PACKS} ${s.code} packs · waiting for PickNet to rate the pool…`);
-    await ready;
-    const ratings = await rateCards(s, [...new Set(pool)], s.ctx[$('#skill').value], (f) => run(f).then((r) => r.logits));
-    const rank = new Map([...ratings].sort((a, b) => b[1] - a[1]).map(([c], i) => [c, i + 1]));
-    sealed = { set: s, deck: [], side: pool, basics: { W: 0, U: 0, B: 0, R: 0, G: 0 }, ratings, rank };
-    autoBuild();
-    if (mode === 'sealed') setMode('sealed');
-    status(`Sealed pool: ${pool.length} cards from ${SEALED_PACKS} ${s.code} packs, rated by PickNet`);
-  } finally {
-    $('#seal-open').disabled = false;
+async function loadDeckModel(s, event) {
+  const key = `${s.code}.${event}`;
+  if (!(key in deckModels)) {
+    try {
+      const r = await fetch(`data/deck/${s.code}.json`);
+      deckModels[key] = r.ok ? new DeckModel(await r.json(), event, s) : null;
+    } catch {
+      deckModels[key] = null;
+    }
   }
+  return deckModels[key];
 }
 
-// Best two colours by the sum of PickNet's top 23 nonland ratings there (colourless cards count for
-// every pair), then those 23 and 17 basics split by the deck's coloured cards.
-function autoBuild() {
-  const all = [...sealed.deck, ...sealed.side], r = (c) => sealed.ratings.get(c);
+// The seed box's seed, or a fresh one if it is empty.
+const takeSeed = () => $('#seed').value.trim() || newSeed();
+
+// The seed of the draft or sealed pool on screen, as a button that copies it into the seed box.
+function showSeed() {
+  const seed = mode === 'sealed' ? sealed?.seed : draft && draftSeed;
+  const btn = $('#seed-used');
+  btn.hidden = !seed;
+  btn.textContent = `Seed ${seed}`;
+  btn.onclick = () => { $('#seed').value = seed; };
+}
+
+async function makeBuilder(s, pool, event, root, seed) {
+  if (!root.firstElementChild) root.append($('#builder-tpl').content.cloneNode(true));
+  const b = { set: s, pool: pool.slice(), deck: [], side: pool.filter(notBasic(s)), basics: { W: 0, U: 0, B: 0, R: 0, G: 0 },
+    event, root, model: await loadDeckModel(s, event), ratings: null, rank: null, values: null };
+  root.builder = b; // a sealed pool reuses the root; the old pool's late ratings must not draw over the new one
+  b.seed = seed;
+  b.ratingsReady = ready.then(() => rateCards(s, [...new Set(pool)], s.ctx[$('#skill').value], (f) => run(f).then((r) => r.logits),
+    4, seededRng(`${seed}:rate`)))
+    .then((ratings) => {
+      b.ratings = ratings;
+      b.rank = new Map([...ratings].sort((a, c) => c[1] - a[1]).map(([c], i) => [c, i + 1]));
+      renderBuilder(b);
+    });
+  const q = (sel) => root.querySelector(sel);
+  q('.b-best').onclick = () => buildBest(b);
+  q('.b-best').disabled = !b.model;
+  q('.b-best').title = b.model
+    ? `Search for the 40-card deck the ${event === 'sealed' ? 'Sealed' : 'Premier Draft'} deck model rates highest (card power, pair synergy, curve, colours and mana base)`
+    : `No deck model for ${s.code}`;
+  q('.b-picknet').onclick = () => b.ratings ? buildPickNet(b) : b.ratingsReady.then(() => buildPickNet(b));
+  q('.b-clear').onclick = () => {
+    b.side.push(...b.deck.splice(0));
+    for (const k in b.basics) b.basics[k] = 0;
+    renderBuilder(b);
+  };
+  q('.b-copy').onclick = () => copyBuilder(b);
+  const labels = q('.b-labels');
+  labels.value = pref.get('labels', 'value');
+  labels.onchange = () => { pref.set('labels', labels.value); renderBuilder(b); };
+  return b;
+}
+
+// Deck counts for the model: deck cards plus basics.
+function builderCounts(b) {
+  const n = new Map();
+  for (const id of b.deck) n.set(id, (n.get(id) || 0) + 1);
+  for (const [k, v] of Object.entries(b.basics)) if (v) n.set(b.model.basicIds[k], (n.get(b.model.basicIds[k]) || 0) + v);
+  return n;
+}
+
+function setDeck(b, counts) {
+  b.deck = [];
+  b.basics = { W: 0, U: 0, B: 0, R: 0, G: 0 };
+  const left = new Map();
+  for (const id of b.pool.filter(notBasic(b.set))) left.set(id, (left.get(id) || 0) + 1);
+  for (const [id, n] of counts) {
+    const k = basicKey(b.set.cards[id]);
+    if (k) { b.basics[k] += n; continue; }
+    for (let i = 0; i < n; i++) b.deck.push(id);
+    left.set(id, (left.get(id) || 0) - n);
+  }
+  b.side = [...left].flatMap(([id, n]) => Array(Math.max(0, n)).fill(id));
+}
+
+function buildBest(b) {
+  const t0 = performance.now();
+  const built = buildDeck(b.model, b.pool, { rng: seededRng(`${b.seed}:build`) });
+  setDeck(b, built.counts);
+  renderBuilder(b);
+  status(`Deck model built the best deck it found in ${(performance.now() - t0).toFixed(0)} ms`);
+}
+
+// Best two colours by the sum of PickNet's top 23 nonland ratings there (colourless cards count for every pair),
+// then its best spells there, as many as the land count for their curve leaves room for, and the same mana base
+// the deck model's build gets (deck.js manaBase), with up to two utility lands PickNet rates as a playable.
+function buildPickNet(b) {
+  const all = b.pool, r = (c) => b.ratings.get(c);
   let best = null;
   for (let i = 0; i < 5; i++) {
     for (let j = i + 1; j < 5; j++) {
       const pair = 'WUBRG'[i] + 'WUBRG'[j];
-      const fits = all.filter((c) => !isLand(sealed.set.cards[c]) && [...sealed.set.cards[c].colors].every((x) => pair.includes(x)))
-        .sort((a, b) => r(b) - r(a)).slice(0, 23);
-      const score = fits.reduce((a, c) => a + r(c), 0) - 20 * (23 - fits.length);
-      if (!best || score > best.score) best = { pair, fits, score };
+      const fits = all.filter((c) => !isLand(b.set.cards[c]) && [...b.set.cards[c].colors].every((x) => pair.includes(x)))
+        .sort((a, c) => r(c) - r(a));
+      const top = fits.slice(0, 23);
+      const score = top.reduce((a, c) => a + r(c), 0) - 20 * (23 - top.length);
+      if (!best || score > best.score) best = { fits, score };
     }
   }
-  const deck = best.fits, side = all.slice();
+  // a pair short of spells is topped up with the best of the rest
+  const rest = all.filter((c) => !isLand(b.set.cards[c]) && !best.fits.includes(c)).sort((a, c) => r(c) - r(a));
+  best.fits = best.fits.concat(rest);
+  const counts = (ids) => ids.reduce((m, c) => m.set(c, (m.get(c) || 0) + 1), new Map());
+  let deck = best.fits.slice(0, 23);
+  for (let round = 0; round < 3; round++) { // the land count follows the curve, which follows the spell count
+    const n = Math.min(40 - landCount(b.set, counts(deck)), best.fits.length);
+    if (n === deck.length) break;
+    deck = best.fits.slice(0, n);
+  }
+  // utility lands PickNet rates as highly as the deck's weakest spell, in place of basics
+  const worst = Math.min(...deck.map(r));
+  const util = utilityLands(b.set, counts(deck), all).filter((c) => r(c) >= worst).sort((a, c) => r(c) - r(a));
+  const { lands, basics } = manaBase(b.set, counts(deck), all, 40 - deck.length, util);
+  deck = deck.concat(lands);
+  const side = all.filter(notBasic(b.set));
   for (const c of deck) side.splice(side.indexOf(c), 1);
-  const pips = { W: 0, U: 0, B: 0, R: 0, G: 0 };
-  for (const c of deck) for (const x of sealed.set.cards[c].colors) pips[x] += 1;
-  const total = Object.values(pips).reduce((a, b) => a + b, 0) || 1, n = 40 - deck.length;
-  const basics = Object.fromEntries(Object.entries(pips).map(([k, v]) => [k, Math.floor((n * v) / total)]));
-  const left = n - Object.values(basics).reduce((a, b) => a + b, 0);
-  Object.keys(pips).sort((a, b) => ((n * pips[b]) / total) % 1 - ((n * pips[a]) / total) % 1).slice(0, left).forEach((k) => { basics[k] += 1; });
-  Object.assign(sealed, { deck, side, basics });
-  renderSealed();
+  Object.assign(b, { deck, side, basics });
+  renderBuilder(b);
 }
 
-function moveCard(id, from, to) {
-  sealed[from].splice(sealed[from].indexOf(id), 1);
-  sealed[to].push(id);
-  renderSealed();
+function moveCard(b, id, from, to) {
+  b[from].splice(b[from].indexOf(id), 1);
+  b[to].push(id);
+  renderBuilder(b);
 }
 
-function renderSealed() {
-  if (!sealed || mode !== 'sealed') return;
-  set = sealed.set;
-  const n = Object.values(sealed.basics).reduce((a, b) => a + b, 0);
-  const lands = n + sealed.deck.filter((c) => isLand(set.cards[c])).length;
-  $('#deck-title').textContent = `Deck: ${sealed.deck.length + n} cards (${sealed.deck.length + n - lands} spells, ${lands} lands)`;
-  $('#deck-colors').replaceChildren(...colorChips(sealed.deck));
-  $('#side-title').textContent = `Sideboard (${sealed.side.length})`;
-  const byRating = (a, b) => sealed.ratings.get(b) - sealed.ratings.get(a);
+const pts = (v) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}`;
+
+function renderBuilder(b) {
+  if (!b || b.root.builder !== b || b.root.closest('[hidden]')) return;
+  set = b.set;
+  const q = (sel) => b.root.querySelector(sel);
+  const n = Object.values(b.basics).reduce((a, c) => a + c, 0), size = b.deck.length + n;
+  const lands = n + b.deck.filter((c) => isLand(set.cards[c])).length;
+  q('.deck-title').textContent = `Deck: ${size} cards (${size - lands} spells, ${lands} lands)`;
+  q('.deck-colors').replaceChildren(...colorChips(b.deck));
+  q('.side-title').textContent = `Sideboard (${b.side.length})`;
+  const label = q('.b-labels').value;
+  b.values = null;
+  if (b.model && size) {
+    const counts = builderCounts(b), z = b.model.score(counts);
+    q('.deck-score').textContent = `Deck model: ${(100 * b.model.winRate(z)).toFixed(1)}% predicted game win rate · ` +
+      `a typical 17Lands ${b.event === 'sealed' ? 'Sealed' : 'Premier Draft'} deck: ${(100 * b.model.typical).toFixed(1)}%` +
+      (size === 40 ? '' : ' · the model knows 40-card decks best');
+    if (label === 'value') b.values = cardValues(b.model, counts, b.pool);
+  } else {
+    q('.deck-score').textContent = b.model ? '' : `No deck model for ${set.code}: PickNet build only.`;
+  }
+  const rating = (c) => b.ratings?.get(c) ?? -1e9;
+  const byRating = (x, y) => rating(y) - rating(x);
   const deco = (from, to) => (el, id) => {
-    const b = document.createElement('span');
-    b.className = 'rate';
-    b.textContent = `#${sealed.rank.get(id)}`;
-    el.title = `${set.cards[id].name} · PickNet's #${sealed.rank.get(id)} of ${sealed.rank.size} in this pool`;
-    el.append(b);
-    el.onclick = () => moveCard(id, from, to);
+    const k = basicKey(set.cards[id]);
+    if (k) { // a basic in the deck: − and + instead of moving to the sideboard
+      el.title = `${BASICS[k]} · click or − for one fewer, + for one more`;
+      const ctl = document.createElement('span');
+      ctl.className = 'basic-ctl';
+      for (const [sign, d] of [['−', -1], ['+', 1]]) {
+        const btn = document.createElement('button');
+        btn.textContent = sign;
+        btn.title = `One ${d < 0 ? 'fewer' : 'more'} ${BASICS[k]}`;
+        btn.onclick = (e) => { e.stopPropagation(); b.basics[k] = Math.max(0, b.basics[k] + d); renderBuilder(b); };
+        ctl.append(btn);
+      }
+      el.append(ctl);
+      el.onclick = () => { b.basics[k] -= 1; renderBuilder(b); };
+      return;
+    }
+    const tag = document.createElement('span');
+    tag.className = 'rate';
+    const name = set.cards[id].name, v = b.values?.get(id);
+    if (label === 'value' && v !== undefined && v !== null) {
+      tag.textContent = pts(v);
+      tag.classList.toggle('neg', v < 0);
+      const land = isLand(set.cards[id]);
+      el.title = from === 'deck'
+        ? `${name} · the deck loses ${v.toFixed(1)} win-rate points if it is swapped for ` +
+          (land ? 'a basic' : 'the best sideboard spell (lands rebuilt to match)')
+        : `${name} · swapped in for ${land ? 'a basic' : 'the deck card it best replaces'}, the deck ` +
+          `${v >= 0 ? 'gains' : 'loses'} ${Math.abs(v).toFixed(1)} win-rate points`;
+    } else if (label === 'rank' && b.rank) {
+      tag.textContent = `#${b.rank.get(id)}`;
+      el.title = `${name} · PickNet's #${b.rank.get(id)} of ${b.rank.size} in this pool`;
+    } else {
+      tag.hidden = true;
+      el.title = name;
+    }
+    el.append(tag);
+    el.onclick = () => moveCard(b, id, from, to);
   };
-  $('#deck').replaceChildren(...pileCols(sealed.deck, false, deco('deck', 'side'), byRating));
-  $('#side').replaceChildren(...pileCols(sealed.side, false, deco('side', 'deck'), byRating));
-  $('#basics').replaceChildren(...Object.entries(BASICS).map(([k, name]) => {
-    const el = document.createElement('span');
-    el.className = 'land';
+  const basicIds = Object.keys(BASICS).flatMap((k) => Array(basicId(set, k) === undefined ? 0 : b.basics[k]).fill(basicId(set, k)));
+  q('.deck').replaceChildren(...pileCols(b.deck.concat(basicIds), false, deco('deck', 'side'), byRating, true));
+  q('.side').replaceChildren(...pileCols(b.side, false, deco('side', 'deck'), byRating, true));
+  // adding a basic of a colour the deck has none of yet; the deck's basics have their own − and +
+  const add = document.createElement('span');
+  add.textContent = 'Add a basic:';
+  q('.basics').replaceChildren(add, ...Object.entries(BASICS).map(([k, name]) => {
+    const btn = document.createElement('button');
+    btn.className = 'ghost';
+    btn.title = `One more ${name}`;
     const dot = document.createElement('i');
     dot.style.background = `var(--${k})`;
-    const minus = document.createElement('button');
-    minus.className = 'ghost';
-    minus.textContent = '−';
-    minus.title = `One fewer ${name}`;
-    minus.disabled = !sealed.basics[k];
-    minus.onclick = () => { sealed.basics[k] -= 1; renderSealed(); };
-    const v = document.createElement('span');
-    v.className = 'n';
-    v.textContent = sealed.basics[k];
-    const plus = document.createElement('button');
-    plus.className = 'ghost';
-    plus.textContent = '+';
-    plus.title = `One more ${name}`;
-    plus.onclick = () => { sealed.basics[k] += 1; renderSealed(); };
-    el.append(dot, name, minus, v, plus);
-    return el;
+    btn.append(dot, name);
+    btn.onclick = () => { b.basics[k] += 1; renderBuilder(b); };
+    return btn;
   }));
-  for (const id of ['#deck', '#side']) $(id).classList.toggle('show-rate', $('#seal-show').checked);
+  for (const sel of ['.deck', '.side']) q(sel).classList.toggle('show-rate', label !== 'none');
 }
 
 function arenaList(ids) {
@@ -566,10 +716,11 @@ function arenaList(ids) {
   return [...n].map(([id, k]) => `${k} ${set.cards[id].name}`);
 }
 
-async function copySealed() {
-  const basics = Object.entries(sealed.basics).filter(([, v]) => v).map(([k, v]) => `${v} ${BASICS[k]}`);
-  const text = ['Deck', ...arenaList(sealed.deck), ...basics, '', 'Sideboard', ...arenaList(sealed.side)].join('\n');
-  const btn = $('#seal-copy');
+async function copyBuilder(b) {
+  set = b.set;
+  const basics = Object.entries(b.basics).filter(([, v]) => v).map(([k, v]) => `${v} ${BASICS[k]}`);
+  const text = ['Deck', ...arenaList(b.deck), ...basics, '', 'Sideboard', ...arenaList(b.side)].join('\n');
+  const btn = b.root.querySelector('.b-copy');
   try {
     await navigator.clipboard.writeText(text);
     btn.textContent = 'Copied!';
@@ -579,20 +730,60 @@ async function copySealed() {
   setTimeout(() => { btn.textContent = 'Copy deck'; }, 1500);
 }
 
+// ---------------------------------------------------------------- sealed
+
+async function openSealed() {
+  $('#seal-open').disabled = true;
+  try {
+    const s = await loadSet($('#set').value);
+    const seed = takeSeed(), rng = seededRng(seed);
+    const pool = Array.from({ length: SEALED_PACKS }, () => openPack(s, rng)).flat();
+    sealed = await makeBuilder(s, pool, 'sealed', $('#sealed-view'), seed);
+    if (mode === 'sealed') setMode('sealed');
+    if (sealed.model) buildBest(sealed);
+    else sealed.ratingsReady.then(() => buildPickNet(sealed));
+    showSeed();
+    status(`Sealed pool: ${pool.length} cards from ${SEALED_PACKS} ${s.code} packs, seed ${seed}`);
+  } finally {
+    $('#seal-open').disabled = false;
+  }
+}
+
+// ---------------------------------------------------------------- draft decks
+
+// The deck builder under a finished draft follows the seat tabs; each seat's builder is kept once made.
+async function showDraftBuild(seatIdx) {
+  const root = $('#build-view');
+  root.hidden = false;
+  $('#build-title').textContent = seatIdx === 0 ? 'Build a deck from your picks' : `Build a deck from Bot ${seatIdx}'s picks`;
+  const holder = $('#build-holder');
+  let b = draftBuilds[seatIdx];
+  if (!b) {
+    b = draftBuilds[seatIdx] = await makeBuilder(draftSet, draft.seats[seatIdx].pool, 'draft', document.createElement('div'),
+      `${draftSeed}:seat${seatIdx}`);
+    if (b.model) buildBest(b);
+    else b.ratingsReady.then(() => buildPickNet(b));
+  }
+  if (poolSeat !== seatIdx || mode !== 'draft') return; // another tab was chosen meanwhile
+  holder.replaceChildren(b.root);
+  renderBuilder(b);
+}
+
 // ---------------------------------------------------------------- modes
 
-const DRAFT_VIEWS = ['#pick-view', '#god-view', '#end-view', '#pool-view', '#log-view', '#intro'];
+const DRAFT_VIEWS = ['#pick-view', '#god-view', '#end-view', '#build-view', '#pool-view', '#log-view', '#intro'];
 
 function setMode(m) {
   mode = m;
   pref.set('mode', m);
   document.body.dataset.mode = m;
   for (const b of $('#mode').children) b.classList.toggle('on', b.dataset.mode === m);
+  showSeed();
   if (m === 'sealed') {
     for (const v of DRAFT_VIEWS) $(v).hidden = true;
     $('#sealed-view').hidden = !sealed;
     $('#seal-intro').hidden = !!sealed;
-    if (sealed) { set = sealed.set; renderSealed(); }
+    if (sealed) renderBuilder(sealed);
     return;
   }
   $('#sealed-view').hidden = $('#seal-intro').hidden = true;
@@ -627,16 +818,6 @@ async function init() {
   $('#undo').onclick = undo;
   $('#copy-deck').onclick = copyDeck;
   $('#seal-open').onclick = openSealed;
-  $('#seal-auto').onclick = () => sealed && autoBuild();
-  $('#seal-clear').onclick = () => {
-    if (!sealed) return;
-    sealed.side.push(...sealed.deck.splice(0));
-    for (const k in sealed.basics) sealed.basics[k] = 0;
-    renderSealed();
-  };
-  $('#seal-copy').onclick = () => sealed && copySealed();
-  $('#seal-show').checked = pref.get('sealShow', '1') === '1';
-  $('#seal-show').addEventListener('change', () => { pref.set('sealShow', $('#seal-show').checked ? '1' : '0'); renderSealed(); });
   for (const b of $('#mode').children) b.onclick = () => setMode(b.dataset.mode);
   setMode(pref.get('mode', 'draft') === 'sealed' ? 'sealed' : 'draft');
   $('#export-csv').onclick = exportCsv;

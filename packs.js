@@ -21,6 +21,17 @@ function mulberry32(seed) {
   };
 }
 
+// A random number generator from a seed string (its FNV-1a hash seeds mulberry32): the same seed gives the same
+// numbers, so the same packs.
+export function seededRng(seed) {
+  let h = 0x811c9dc5;
+  for (const ch of String(seed)) h = Math.imul(h ^ ch.codePointAt(0), 0x01000193);
+  return mulberry32(h);
+}
+
+// A fresh six-character seed, for when the user gives none.
+export const newSeed = () => Math.floor(Math.random() * 36 ** 6).toString(36).padStart(6, '0');
+
 // k distinct cards, each draw proportional to w among those not yet drawn.
 function drawDistinct(sheet, k, w, rng) {
   const out = new Set();

@@ -27,6 +27,10 @@
           <option value="strong">Strong (62%+ win rate)</option>
         </select>
       </label>
+      <label title="The same seed opens the same packs: a sealed pool, or a draft's packs and bot picks (given the same picks from you). Leave it empty for a random one.">Seed
+        <input id="seed" type="text" placeholder="random" size="8" spellcheck="false" autocomplete="off">
+      </label>
+      <button id="seed-used" class="ghost" hidden title="The seed of the draft or pool on screen. Click to put it in the seed box, to replay it or share it."></button>
       <button id="new" class="draft-only" disabled>New draft</button>
       <button id="seal-open" class="sealed-only" disabled>Open sealed pool</button>
       <button id="undo" class="ghost draft-only" disabled title="Undo your last pick (⌘Z / Ctrl+Z)">Undo pick</button>
@@ -68,6 +72,14 @@
       <div id="seat-tabs" class="tabs"></div>
     </section>
 
+    <section id="build-view" hidden>
+      <div class="bar">
+        <h2 id="build-title">Build a deck</h2>
+        <p>The deck model searches the picks for its best 40-card deck; change it freely and the score follows.</p>
+      </div>
+      <div id="build-holder"></div>
+    </section>
+
     <section id="pool-view" hidden>
       <div class="bar">
         <h2 id="pool-title">Your picks</h2>
@@ -81,26 +93,11 @@
       <table id="log"></table>
     </section>
 
-    <section id="sealed-view" hidden>
-      <div class="bar">
-        <h2 id="deck-title">Deck</h2>
-        <span id="deck-colors" class="chips"></span>
-        <button id="seal-auto" class="ghost" title="Best two colours by PickNet's ratings: its top 23 cards there plus 17 basics">Auto-build with PickNet</button>
-        <button id="seal-clear" class="ghost">Clear deck</button>
-        <button id="seal-copy" class="ghost" title="Deck and sideboard in MTG Arena's import format">Copy deck</button>
-        <label class="toggle"><input type="checkbox" id="seal-show"> Show PickNet's ratings</label>
-      </div>
-      <div id="basics" class="basics"></div>
-      <div id="deck" class="pool"></div>
-      <div class="bar">
-        <h2 id="side-title">Sideboard</h2>
-        <p>Click a card to move it between deck and sideboard.</p>
-      </div>
-      <div id="side" class="pool"></div>
-    </section>
+    <section id="sealed-view" hidden></section>
 
     <p id="seal-intro" class="intro" hidden>Sealed: open six packs of the chosen set and build a 40-card deck. PickNet
-      rates every card in the pool (how much a drafter would want it as a first pick) and can build a deck for you to start from.</p>
+      rates every card in the pool (how much a drafter would want it as a first pick), and the deck model, fit on 17Lands Sealed
+      games, searches the pool for the deck it expects to win the most games with.</p>
 
     <p id="intro" class="intro">PickNet is a transformer trained on 17Lands drafts to predict which card a human takes.
       It runs entirely in your browser and drives the 7 bots at the table. Packs are real opening packs from 17Lands drafts.</p>
@@ -112,6 +109,32 @@
     Wizards. Portions of the materials used are property of Wizards of the Coast. &copy;Wizards of the Coast LLC.
     Card images from <a href="https://scryfall.com">Scryfall</a>; draft data from <a href="https://www.17lands.com">17Lands</a>.
   </footer>
+
+  <template id="builder-tpl">
+    <div class="bar">
+      <h2 class="deck-title">Deck</h2>
+      <span class="deck-colors chips"></span>
+      <button class="b-best">Build best deck</button>
+      <button class="b-picknet ghost" title="Best two colours by PickNet's ratings: their top cards there, as many as the curve's land count leaves room for, and the same mana base as Build best deck">PickNet build</button>
+      <button class="b-clear ghost">Clear deck</button>
+      <button class="b-copy ghost" title="Deck and sideboard in MTG Arena's import format">Copy deck</button>
+      <label title="Deck model value: win-rate points a card is worth to this deck (a deck card: what the deck loses without it; a sideboard card: what swapping it in would gain or lose). PickNet rank: its first-pick rating within the pool.">Card labels
+        <select class="b-labels">
+          <option value="value">Deck model value</option>
+          <option value="rank">PickNet rank</option>
+          <option value="none">None</option>
+        </select>
+      </label>
+    </div>
+    <p class="deck-score"></p>
+    <div class="basics"></div>
+    <div class="deck pool"></div>
+    <div class="bar">
+      <h2 class="side-title">Sideboard</h2>
+      <p>Click a card to move it between deck and sideboard.</p>
+    </div>
+    <div class="side pool"></div>
+  </template>
 
   <script type="module" src="app.js"></script>
 </body>
