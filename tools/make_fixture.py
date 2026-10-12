@@ -13,7 +13,7 @@ from export_model import OL, SHARDS, SITE, load
 NAMES = ("idx", "cnt", "pick", "oidx", "ocnt", "ctx", "sid")
 
 
-def main(path=str(OL / "results/picknet_all/models/all_d256_ep2.pt")):
+def main(path=str(OL / "results/picknet_all/models/all_d256_ep3.pt")):
     m = load(path)
     out = []
     for code in ("BLB", "LCI", "ECL"):

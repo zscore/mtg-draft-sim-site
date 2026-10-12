@@ -41,6 +41,7 @@ function run(f) {
 
 // history: every step's picks (seat 0 = you), so undo can replay the draft from its opening packs.
 let model, set, draft, openers, history, step, log, selected = null, busy = false, autodrafting = false;
+let draftId, draftTime, poolSeat = 0;
 const setCache = {};
 const pref = {
   get(k, d) { try { return localStorage.getItem(`picknet.${k}`) ?? d; } catch { return d; } },
@@ -78,6 +79,9 @@ async function newDraft() {
   openers = draft.openers.map((p) => p.slice());
   history = [];
   log = [];
+  draftId = globalThis.crypto?.randomUUID?.().replace(/-/g, '') ??
+    Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+  draftTime = new Date().toISOString().replace('T', ' ').slice(0, 19);
   $('#intro').hidden = true;
   $('#new').disabled = false;
   next();
@@ -346,6 +350,7 @@ function pileCols(ids, small = false) {
 }
 
 function renderPool(seatIdx) {
+  poolSeat = seatIdx;
   const ids = draft.seats[seatIdx].pool;
   $('#pool-title').textContent = seatIdx === 0 ? `Your picks (${ids.length})` : `Bot ${seatIdx}'s picks (${ids.length})`;
   $('#pool-colors').replaceChildren(...colorChips(ids));
@@ -378,6 +383,74 @@ function finish() {
   status(`Draft complete · PickNet ran ${log.length} steps for 8 seats`);
 }
 
+// ---------------------------------------------------------------- export
+
+// One row per pick for every seat, in 17Lands' draft_data schema (pack/pick numbers from 0, a
+// pack_card_ and pool_ count column for every card in the set). Each seat gets its own draft_id;
+// table_id and seat tie the eight together.
+function exportRows() {
+  const ids = Object.keys(set.cards).map(Number);
+  const rows = [];
+  draft.seats.forEach((seat, s) => {
+    const pool = new Map();
+    for (let round = 0; round < 3; round++) {
+      for (let k = 0; k < set.n_picks; k++) {
+        const t = round * SLOTS + k;
+        if (seat.pick[t] === set.pad) break; // not picked yet
+        const pick = seat.pick[t], pack = new Map();
+        for (const c of seat.seen[t]) pack.set(c, (pack.get(c) || 0) + 1);
+        const row = {
+          expansion: set.code, event_type: 'PickNetSim', draft_id: `${draftId}${s}`, table_id: draftId, seat: s,
+          drafter: s === 0 ? 'human' : 'picknet', draft_time: draftTime, pack_number: round, pick_number: k,
+          pick: set.cards[pick].name,
+        };
+        for (const c of ids) row[`pack_card_${set.cards[c].name}`] = pack.get(c) || 0;
+        for (const c of ids) row[`pool_${set.cards[c].name}`] = pool.get(c) || 0;
+        rows.push(row);
+        pool.set(pick, (pool.get(pick) || 0) + 1);
+      }
+    }
+  });
+  return rows;
+}
+
+function download(name, type, text) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type }));
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 0);
+}
+
+const fileBase = () => `picknet_${set.code}_${draftTime.replace(/[^0-9]/g, '').slice(0, 12)}`;
+
+function exportCsv() {
+  const rows = exportRows(), cols = Object.keys(rows[0]);
+  const q = (v) => (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
+  download(`${fileBase()}.csv`, 'text/csv', [cols.map(q).join(','), ...rows.map((r) => cols.map((c) => q(r[c])).join(','))].join('\n') + '\n');
+}
+
+// Same rows as the CSV, minus the zero card counts.
+function exportJsonl() {
+  const rows = exportRows().map((r) => Object.fromEntries(Object.entries(r).filter(([k, v]) => v !== 0 || !/^(pack_card|pool)_/.test(k))));
+  download(`${fileBase()}.jsonl`, 'application/x-ndjson', rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
+}
+
+// The shown seat's picks as an Arena-style list ("2 Card Name"), in pick order.
+async function copyDeck() {
+  const n = new Map();
+  for (const id of draft.seats[poolSeat].pool) n.set(id, (n.get(id) || 0) + 1);
+  const text = [...n].map(([id, k]) => `${k} ${set.cards[id].name}`).join('\n');
+  const btn = $('#copy-deck');
+  try {
+    await navigator.clipboard.writeText(text);
+    btn.textContent = 'Copied!';
+  } catch {
+    btn.textContent = 'Copy failed';
+  }
+  setTimeout(() => { btn.textContent = 'Copy decklist'; }, 1500);
+}
+
 // ---------------------------------------------------------------- controls
 
 async function init() {
@@ -397,6 +470,9 @@ async function init() {
   $('#auto').onclick = () => commit(null);
   $('#rest').onclick = autodraftRest;
   $('#undo').onclick = undo;
+  $('#copy-deck').onclick = copyDeck;
+  $('#export-csv').onclick = exportCsv;
+  $('#export-jsonl').onclick = exportJsonl;
   document.addEventListener('keydown', (e) => {
     if (e.target.closest('select, input, textarea')) return;
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {

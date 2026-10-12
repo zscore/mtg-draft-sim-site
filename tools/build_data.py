@@ -1,34 +1,46 @@
-"""Per-set data for the draft page: cards (+ Scryfall image/colour/rarity), real opening packs, and
+"""Per-set data for the draft page: cards (+ Scryfall image/colour/rarity), pack collation, and
 per-draft context vectors for the model.
 
-    python tools/build_data.py
+    python tools/build_data.py [SET ...]
 
-Writes data/sets.json and data/{SET}.json. Opening packs are the full packs seen at the first pick of
-a round in held-out (test split) Premier drafts, so collation (rarity, bonus sheets) comes for free;
-round 1 is skipped for sets whose P1P1 was not logged. Scryfall lookups are cached in
-tools/scryfall_cache.json.
+Writes data/sets.json and data/{SET}.json. The collation (tools/collation.py) is resolved to card ids
+here: each sheet's Scryfall query, matched by name to the set's 17Lands card list. Scryfall lookups
+are cached in tools/scryfall_cache.json and tools/scryfall_sheets.json.
 """
 import json
+import re
+import subprocess
+import sys
 import time
+import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
 import numpy as np
 
+from collation import SETS, per_card
+
 OL = Path("/Users/zblanton/Documents/repos/mtg-open-lane")
 SHARDS = OL / "data" / "features" / "picks_all"
 SITE = Path(__file__).resolve().parents[1]
 CACHE = SITE / "tools" / "scryfall_cache.json"
-N_DRAFTS = 400  # test drafts per set to take opening packs from
+SHEET_CACHE = SITE / "tools" / "scryfall_sheets.json"
 HEADERS = {"User-Agent": "mtg-draft-sim-site/0.1", "Accept": "application/json",
            "Content-Type": "application/json"}
 
 
 def scryfall(url, body=None):
     req = urllib.request.Request(url, data=None if body is None else json.dumps(body).encode(), headers=HEADERS)
-    time.sleep(0.12)  # Scryfall asks for <= 10 requests/s
-    with urllib.request.urlopen(req) as r:
-        return json.load(r)
+    for wait in (0.5, 2, 10, 30, 60):  # Scryfall asks for <= 2 searches/s; back off on 429
+        time.sleep(wait)
+        try:
+            with urllib.request.urlopen(req) as r:
+                return json.load(r)
+        except urllib.error.HTTPError as e:
+            if e.code != 429:
+                raise
+    raise RuntimeError(f"Scryfall kept rate-limiting {url}")
 
 
 def summarize(card):
@@ -67,29 +79,82 @@ def lookup(keys, cache):
         cache["|".join((n, s))] = {"img": "", "rarity": "c", "colors": "", "cmc": 0, "type": ""}
 
 
+def search(query, cache):
+    """All card names matching a Scryfall query (one per card, not per printing)."""
+    if query not in cache:
+        url = "https://api.scryfall.com/cards/search?" + urllib.parse.urlencode({"q": query, "unique": "cards"})
+        found = []
+        while url:
+            try:
+                res = scryfall(url)
+            except urllib.error.HTTPError as e:
+                if e.code != 404:  # Scryfall answers 404 for an empty result
+                    raise
+                break
+            found += [c["name"] for c in res["data"]]
+            url = res.get("next_page")
+        cache[query] = sorted(found)
+    return cache[query]
+
+
+def resolve_collation(code, cards, cache):
+    """tools/collation.py's entry for a set -> {sheets: {name: [card ids]}, layouts, balance}, with the
+    sheets' Scryfall names matched to the set's cards (full name or front face) and per-card slot
+    weights turned into per-slot ones. Fails loudly on an empty sheet."""
+    spec = SETS[code]
+    by_name = {}
+    norm = lambda n: re.sub(r"[^\x00-\x7f]", "?", n.lower())  # 17Lands writes "Bespoke Bō" as "Bespoke B?"
+    for i, c in cards.items():
+        by_name.setdefault(norm(c["name"]), i)
+        by_name.setdefault(norm(c["name"].split(" // ")[0]), i)
+    sheets = {}
+    for name, sh in spec["sheets"].items():
+        ids = set()
+        for n in search(sh["q"], cache):
+            i = by_name.get(norm(n), by_name.get(norm(n.split(" // ")[0])))
+            if i is not None:
+                ids.add(i)
+        sheets[name] = ids
+    for name, sh in spec["sheets"].items():
+        for m in sh["minus"]:
+            sheets[name] -= sheets[m]
+        if not sheets[name]:
+            raise ValueError(f"{code}: sheet {name} ({sh['q']}) matched no cards")
+    sheets = {k: sorted(v) for k, v in sheets.items()}
+
+    def slot(sl):
+        w = {k: v * len(sheets[k]) if isinstance(sl["w"], per_card) else v for k, v in sl["w"].items() if v > 0}
+        tot = sum(w.values())
+        out = {"n": sl["n"], "w": [[k, round(v / tot, 6)] for k, v in w.items()]}
+        for k in ("balance", "dedupe"):
+            if sl.get(k):
+                out[k] = True
+        return out
+
+    layouts = [{"w": lay["w"], "slots": [slot(sl) for sl in lay["slots"] + spec.get("common", [])]}
+               for lay in spec["layouts"]]
+    return {"sheets": sheets, "layouts": layouts, "balance": spec["balance"], "unique": spec.get("unique", False)}
+
+
 def main():
     cards = np.load(SHARDS / "cards.npz")
     sets, printing, set_of = list(cards["sets"]), cards["printing"], cards["set_of"]
     pad = len(printing)
     cache = json.loads(CACHE.read_text()) if CACHE.exists() else {}
+    sheet_cache = json.loads(SHEET_CACHE.read_text()) if SHEET_CACHE.exists() else {}
     lookup([(str(printing[i]), sets[set_of[i]]) for i in range(pad)], cache)
     CACHE.write_text(json.dumps(cache))
 
     index = []
     (SITE / "data").mkdir(exist_ok=True)
+    only = sys.argv[1:]
     for sid, code in enumerate(sets):
+        if only and code not in only:
+            continue
         d = SHARDS / f"{code}.PremierDraft"
         info = json.loads((d / "info.json").read_text())
         split = np.load(d / "split.npy")
         test = np.flatnonzero(split == 2)
-        rows = test[:N_DRAFTS]
-        idx = np.load(d / "idx.npy", mmap_mode="r")
-        cnt = np.load(d / "cnt.npy", mmap_mode="r")
-        packs = []
-        for slot in ((15, 30) if info["p1p1_missing"] else (0, 15, 30)):
-            ii, cc = np.asarray(idx[rows, slot]), np.asarray(cnt[rows, slot])
-            for a, b in zip(ii, cc):
-                packs.append([int(x) for x, k in zip(a, b) for _ in range(k)])
         ctx, wr = np.load(d / "ctx.npy")[test], np.load(d / "wr.npy")[test]
         strong = ctx[wr >= 0.62] if (wr >= 0.62).sum() > 100 else ctx
         ids = np.flatnonzero(set_of == sid)
@@ -99,12 +164,16 @@ def main():
             set_name = code
         out = {"code": code, "name": set_name, "sid": sid, "n_picks": info["n_picks"], "pad": pad,
                "ctx": {"typical": ctx.mean(0).round(4).tolist(), "strong": strong.mean(0).round(4).tolist()},
-               "cards": {int(i): {"name": str(printing[i]), **cache[f"{printing[i]}|{code}"]} for i in ids},
-               "packs": packs}
+               "cards": {int(i): {"name": str(printing[i]), **cache[f"{printing[i]}|{code}"]} for i in ids}}
+        out["collation"] = resolve_collation(code, out["cards"], sheet_cache)
+        SHEET_CACHE.write_text(json.dumps(sheet_cache, indent=0))
         (SITE / "data" / f"{code}.json").write_text(json.dumps(out, separators=(",", ":")))
+        subprocess.run(["node", str(SITE / "tools" / "fit_balance.mjs"), code], check=True)
         index.append({"code": code, "name": set_name, "n_picks": info["n_picks"]})
-        print(f"{code} ({set_name}): {len(ids)} cards, {len(packs)} opening packs, {info['n_picks']}-card packs")
-    (SITE / "data" / "sets.json").write_text(json.dumps(index, indent=1))
+        sizes = {k: len(v) for k, v in out["collation"]["sheets"].items()}
+        print(f"{code} ({set_name}): {len(ids)} cards, {info['n_picks']}-card packs, sheets {sizes}")
+    if not only:
+        (SITE / "data" / "sets.json").write_text(json.dumps(index, indent=1))
 
 
 if __name__ == "__main__":

@@ -2,6 +2,8 @@
 // Layout matches mtg-open-lane's picks_all shards: 3 rounds x 15 pick slots (slots past a set's pack
 // size stay empty), up to 15 distinct cards per pack token set, up to 8 "taken by the others" tokens.
 
+import { openPack } from './packs.js';
+
 export const SLOTS = 15, P = 15, K = 8, SEATS = 8, T_MAX = 3 * SLOTS;
 
 function counts(cards) {
@@ -101,20 +103,13 @@ export function sample(ch, temperature, rng = Math.random) {
 
 export class Draft {
   // set: data/{SET}.json; seat 0 is the human. openers: the 24 packs to open (3 rounds x 8 seats),
-  // e.g. a previous draft's, to replay it; by default a random sample of the set's packs.
+  // e.g. a previous draft's, to replay it; by default freshly opened from the set's collation.
   constructor(set, rng = Math.random, openers = null) {
     this.set = set;
     this.n = set.n_picks;
     this.rng = rng;
     this.seats = Array.from({ length: SEATS }, () => new Seat(set.pad));
-    if (!openers) {
-      const order = set.packs.map((_, i) => i);
-      for (let i = order.length - 1; i > 0; i--) {
-        const j = Math.floor(rng() * (i + 1));
-        [order[i], order[j]] = [order[j], order[i]];
-      }
-      openers = order.slice(0, 3 * SEATS).map((i) => set.packs[i]);
-    }
+    if (!openers) openers = Array.from({ length: 3 * SEATS }, () => openPack(set, rng));
     this.openers = openers.map((p) => p.slice()); // hands are cut from these as picks are made
     this.round = 0;
     this.k = 0;
