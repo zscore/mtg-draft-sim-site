@@ -18,12 +18,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-OL = Path("/Users/zblanton/Documents/repos/mtg-open-lane")
-sys.path.insert(0, str(OL / "src"))
-from openlane.picknet import PickNet, bag  # noqa: E402
+PICKNET = Path("/Users/zblanton/Documents/repos/picknet")
+DATA = Path("/Users/zblanton/Documents/repos/mtg-data/data")  # shared 17Lands data (mtg-data)
+sys.path[:0] = [str(PICKNET / "src"), str(DATA.parent / "src")]
+from picknet.model import PickNet, bag  # noqa: E402
 
 SITE = Path(__file__).resolve().parents[1]
-SHARDS = OL / "data" / "features" / "picks_all"
+SHARDS = DATA / "features" / "picks_all"
 OUT = SITE / "model" / "picknet.onnx"
 
 
@@ -74,7 +75,7 @@ def test_batch(set_code="BLB", n=8):
 
 
 def main(path: str = ""):
-    path = Path(path) if path else max((OL / "results/picknet_all/models").glob("all_d256*.pt"),
+    path = Path(path) if path else max((PICKNET / "results/picknet_all/models").glob("all_d256*.pt"),
                                        key=lambda p: p.stat().st_mtime)
     print(f"checkpoint {path}")
     full = load(path)

@@ -12,7 +12,7 @@ A real pack whose sheet mix the generator never produced scores -inf and is coun
 
 Real packs come from the half of the drafts that tools/fit_rates.py does not fit on.
 The score cannot see colour balance or which cards come together, so those get their own checks.
-Needs numpy, scipy, polars and node (mtg-open-lane's .venv has the Python side).
+Needs numpy, scipy, polars and node (mtg-open-lane's or picknet's .venv has the Python side).
 """
 import argparse
 import json
@@ -27,7 +27,7 @@ from scipy import stats
 from fit_rates import half
 
 SITE = Path(__file__).resolve().parents[1]
-PARQUET = Path("/Users/zblanton/Documents/repos/mtg-open-lane/data/parquet")
+PARQUET = Path("/Users/zblanton/Documents/repos/mtg-data/data/parquet")
 
 
 def real_packs(code, ids_by_name, n, rng):

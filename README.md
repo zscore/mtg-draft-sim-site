@@ -1,6 +1,6 @@
 # Draft vs PickNet
 
-Draft against 7 bots driven by PickNet (mtg-open-lane's all-sets pick model), running in the browser
+Draft against 7 bots driven by PickNet (the all-sets pick model from ../picknet), running in the browser
 with onnxruntime-web. Packs are opened by packs.js from each set's MTG Arena collation
 (tools/collation.py): Wizards' published slot rates, corrected where real Arena packs differ.
 
@@ -37,4 +37,4 @@ Pack collation:
 verify_packs scores every pack's log-probability under the generator and compares real packs with
 generated ones (KS test), split into "which sheets" and "which cards within a sheet", plus per-sheet
 counts, per-card chi-square, duplicates and colour balance. fit_rates fits on half of the drafts and
-verify_packs tests on the other half. Both need the 17Lands parquet files from mtg-open-lane.
+verify_packs tests on the other half. Both need the 17Lands parquet files from ../mtg-data.

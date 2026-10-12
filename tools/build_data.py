@@ -21,8 +21,8 @@ import numpy as np
 
 from collation import SETS, per_card
 
-OL = Path("/Users/zblanton/Documents/repos/mtg-open-lane")
-SHARDS = OL / "data" / "features" / "picks_all"
+DATA = Path("/Users/zblanton/Documents/repos/mtg-data/data")  # shared 17Lands data (mtg-data)
+SHARDS = DATA / "features" / "picks_all"
 SITE = Path(__file__).resolve().parents[1]
 CACHE = SITE / "tools" / "scryfall_cache.json"
 SHEET_CACHE = SITE / "tools" / "scryfall_sheets.json"
