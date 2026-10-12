@@ -930,6 +930,9 @@ function setMode(m) {
 
 async function init() {
   const sets = await (await fetch('data/sets.json')).json();
+  // the newest set first, then the rest by name
+  const FIRST = 'FRA';
+  sets.sort((a, b) => (b.code === FIRST) - (a.code === FIRST) || a.name.localeCompare(b.name));
   $('#set').replaceChildren(...sets.map((s) => new Option(`${s.name} (${s.code})`, s.code)));
   for (const k of ['set', 'style', 'skill']) {
     const v = pref.get(k, null);
