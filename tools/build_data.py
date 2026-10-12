@@ -80,8 +80,9 @@ def lookup(keys, cache):
 
 
 def search(query, cache):
-    """All card names matching a Scryfall query (one per card, not per printing)."""
-    if query not in cache:
+    """The cards matching a Scryfall query, one printing each (the one the query matched, so a bonus
+    sheet's query gives its bonus printing): [{name, img, ...}]."""
+    if not all(isinstance(c, dict) for c in cache.get(query, [None])):  # missing, or an old names-only entry
         url = "https://api.scryfall.com/cards/search?" + urllib.parse.urlencode({"q": query, "unique": "cards"})
         found = []
         while url:
@@ -91,29 +92,35 @@ def search(query, cache):
                 if e.code != 404:  # Scryfall answers 404 for an empty result
                     raise
                 break
-            found += [c["name"] for c in res["data"]]
+            found += [{"name": c["name"], **summarize(c)} for c in res["data"]]
             url = res.get("next_page")
-        cache[query] = sorted(found)
+        cache[query] = sorted(found, key=lambda c: c["name"])
     return cache[query]
 
 
 def resolve_collation(code, cards, cache):
-    """tools/collation.py's entry for a set -> {sheets: {name: [card ids]}, layouts, balance}, with the
-    sheets' Scryfall names matched to the set's cards (full name or front face) and per-card slot
-    weights turned into per-slot ones. Fails loudly on an empty sheet."""
+    """tools/collation.py's entry for a set -> ({sheets: {name: [card ids]}, layouts, balance}, images),
+    with the sheets' Scryfall names matched to the set's cards (full name or front face) and per-card
+    slot weights turned into per-slot ones. Fails loudly on an empty sheet. images: card id -> the image
+    of the printing its sheet holds, the main set's sheets first, so a card that only comes on a bonus
+    sheet (Special Guests, Breaking News, ...) shows that printing and a main-set card its plain one."""
     spec = SETS[code]
     by_name = {}
     norm = lambda n: re.sub(r"[^\x00-\x7f]", "?", n.lower())  # 17Lands writes "Bespoke Bō" as "Bespoke B?"
     for i, c in cards.items():
         by_name.setdefault(norm(c["name"]), i)
         by_name.setdefault(norm(c["name"].split(" // ")[0]), i)
-    sheets = {}
-    for name, sh in spec["sheets"].items():
+    sheets, images = {}, {}
+    main_first = sorted(spec["sheets"].items(), key=lambda kv: not kv[1]["q"].startswith(f"e:{code.lower()} "))
+    for name, sh in main_first:
         ids = set()
-        for n in search(sh["q"], cache):
+        for c in search(sh["q"], cache):
+            n = c["name"]
             i = by_name.get(norm(n), by_name.get(norm(n.split(" // ")[0])))
             if i is not None:
                 ids.add(i)
+                if c["img"]:
+                    images.setdefault(i, c["img"])
         sheets[name] = ids
     for name, sh in spec["sheets"].items():
         for m in sh["minus"]:
@@ -133,7 +140,8 @@ def resolve_collation(code, cards, cache):
 
     layouts = [{"w": lay["w"], "slots": [slot(sl) for sl in lay["slots"] + spec.get("common", [])]}
                for lay in spec["layouts"]]
-    return {"sheets": sheets, "layouts": layouts, "balance": spec["balance"], "unique": spec.get("unique", False)}
+    return ({"sheets": sheets, "layouts": layouts, "balance": spec["balance"], "unique": spec.get("unique", False)},
+            images)
 
 
 def main():
@@ -165,7 +173,9 @@ def main():
         out = {"code": code, "name": set_name, "sid": sid, "n_picks": info["n_picks"], "pad": pad,
                "ctx": {"typical": ctx.mean(0).round(4).tolist(), "strong": strong.mean(0).round(4).tolist()},
                "cards": {int(i): {"name": str(printing[i]), **cache[f"{printing[i]}|{code}"]} for i in ids}}
-        out["collation"] = resolve_collation(code, out["cards"], sheet_cache)
+        out["collation"], images = resolve_collation(code, out["cards"], sheet_cache)
+        for i, img in images.items():
+            out["cards"][i]["img"] = img
         SHEET_CACHE.write_text(json.dumps(sheet_cache, indent=0))
         (SITE / "data" / f"{code}.json").write_text(json.dumps(out, separators=(",", ":")))
         subprocess.run(["node", str(SITE / "tools" / "fit_balance.mjs"), code], check=True)

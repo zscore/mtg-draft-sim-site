@@ -9,9 +9,13 @@
 <body>
   <header>
     <h1>Draft vs PickNet</h1>
+    <div id="mode" class="tabs" role="tablist">
+      <button data-mode="draft" class="on">Draft</button>
+      <button data-mode="sealed">Sealed</button>
+    </div>
     <div class="controls">
       <label>Set <select id="set"></select></label>
-      <label>Bots
+      <label class="draft-only">Bots
         <select id="style">
           <option value="0">Greedy (top pick)</option>
           <option value="1">Human-like (sampled)</option>
@@ -23,8 +27,9 @@
           <option value="strong">Strong (62%+ win rate)</option>
         </select>
       </label>
-      <button id="new" disabled>New draft</button>
-      <button id="undo" class="ghost" disabled title="Undo your last pick (⌘Z / Ctrl+Z)">Undo pick</button>
+      <button id="new" class="draft-only" disabled>New draft</button>
+      <button id="seal-open" class="sealed-only" disabled>Open sealed pool</button>
+      <button id="undo" class="ghost draft-only" disabled title="Undo your last pick (⌘Z / Ctrl+Z)">Undo pick</button>
     </div>
     <div id="status" class="status">Loading PickNet…</div>
   </header>
@@ -76,9 +81,37 @@
       <table id="log"></table>
     </section>
 
+    <section id="sealed-view" hidden>
+      <div class="bar">
+        <h2 id="deck-title">Deck</h2>
+        <span id="deck-colors" class="chips"></span>
+        <button id="seal-auto" class="ghost" title="Best two colours by PickNet's ratings: its top 23 cards there plus 17 basics">Auto-build with PickNet</button>
+        <button id="seal-clear" class="ghost">Clear deck</button>
+        <button id="seal-copy" class="ghost" title="Deck and sideboard in MTG Arena's import format">Copy deck</button>
+        <label class="toggle"><input type="checkbox" id="seal-show"> Show PickNet's ratings</label>
+      </div>
+      <div id="basics" class="basics"></div>
+      <div id="deck" class="pool"></div>
+      <div class="bar">
+        <h2 id="side-title">Sideboard</h2>
+        <p>Click a card to move it between deck and sideboard.</p>
+      </div>
+      <div id="side" class="pool"></div>
+    </section>
+
+    <p id="seal-intro" class="intro" hidden>Sealed: open six packs of the chosen set and build a 40-card deck. PickNet
+      rates every card in the pool (how much a drafter would want it as a first pick) and can build a deck for you to start from.</p>
+
     <p id="intro" class="intro">PickNet is a transformer trained on 17Lands drafts to predict which card a human takes.
       It runs entirely in your browser and drives the 7 bots at the table. Packs are real opening packs from 17Lands drafts.</p>
   </main>
+
+  <footer>
+    Draft vs PickNet is unofficial Fan Content permitted under the
+    <a href="https://company.wizards.com/en/legal/fancontentpolicy">Fan Content Policy</a>. Not approved/endorsed by
+    Wizards. Portions of the materials used are property of Wizards of the Coast. &copy;Wizards of the Coast LLC.
+    Card images from <a href="https://scryfall.com">Scryfall</a>; draft data from <a href="https://www.17lands.com">17Lands</a>.
+  </footer>
 
   <script type="module" src="app.js"></script>
 </body>

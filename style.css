@@ -101,6 +101,22 @@ th { color: var(--muted); font-weight: 600; }
 td.num { font-variant-numeric: tabular-nums; }
 tr.agree td:first-child { color: var(--good); }
 
+body[data-mode="sealed"] .draft-only, body[data-mode="draft"] .sealed-only { display: none; }
+header .tabs button { padding: 4px 12px; }
+.rate { position: absolute; right: 4px; top: 4px; background: rgba(0, 0, 0, .78); color: #fff; font-size: 11px;
+  font-weight: 700; padding: 0 5px; border-radius: 8px; font-variant-numeric: tabular-nums; display: none; }
+.show-rate .rate { display: block; }
+#deck .card, #side .card { cursor: pointer; }
+#deck:empty::before { content: "No cards in the deck yet."; color: var(--muted); font-size: 14px; }
+.basics { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 12px; align-items: center; font-size: 14px; }
+.basics .land { display: inline-flex; gap: 6px; align-items: center; }
+.basics .land i { width: 11px; height: 11px; border-radius: 50%; border: 1px solid rgba(0, 0, 0, .2); }
+.basics button { padding: 0 8px; font-size: 14px; line-height: 22px; }
+.basics .n { min-width: 2ch; text-align: center; font-variant-numeric: tabular-nums; }
+
+footer { max-width: 1400px; margin: 0 auto; padding: 16px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+footer a { color: inherit; }
+
 @media (max-width: 600px) {
   .pack { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
   .status { margin-left: 0; }

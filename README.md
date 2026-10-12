@@ -6,6 +6,13 @@ with onnxruntime-web. Packs are opened by packs.js from each set's MTG Arena col
 
     python3 serve.py            # http://localhost:8000 (COOP/COEP headers enable WASM threads)
 
+Sealed mode opens six packs and has PickNet rate the pool: each card's first-pick logit, read against
+an anchor card shared by every pack the pool is split into (draft.js rateCards). Auto-build takes the
+two colours with the best top 23 by that rating, plus 17 basics.
+
+Card images are hotlinked from Scryfall's image CDN. A card on a bonus sheet (Special Guests, Breaking
+News, ...) shows the printing its sheet's Scryfall query matched; main-set cards show the main set's.
+
 Rebuilding:
 
     python tools/export_model.py [checkpoint.pt]   # model/picknet.onnx, checked against PyTorch (needs torch, onnx, onnxscript, onnxruntime)

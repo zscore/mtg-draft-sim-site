@@ -144,3 +144,24 @@ export class Draft {
     this.show();
   }
 }
+
+// PickNet's first-pick preference for each of `ids` (distinct card ids): Map id -> score. The cards go
+// in as first-pick packs of up to 15, each also holding one fixed anchor card, and each card's logit
+// is read relative to the anchor's so scores from different packs compare. Averaged over `reps`
+// random splits into packs, since a card's logit shifts a little with its packmates. run(feeds) -> logits.
+export async function rateCards(set, ids, ctx, run, reps = 4, rng = Math.random) {
+  const [anchor, ...rest] = ids;
+  const chunks = [];
+  for (let r = 0; r < reps; r++) {
+    const order = rest.map((c) => [rng(), c]).sort((a, b) => a[0] - b[0]).map((x) => x[1]);
+    for (let i = 0; i < order.length || i === 0; i += P - 1) chunks.push([anchor, ...order.slice(i, i + P - 1)]);
+  }
+  const seats = chunks.map((c) => { const s = new Seat(set.pad); s.show(0, c); return s; });
+  const logits = await run(feeds(seats, 0, seats.map(() => ctx), set.sid));
+  const out = new Map(ids.map((c) => [c, 0]));
+  seats.forEach((s, b) => {
+    const ch = choices(s, 0, logits, b), a = ch.find((x) => x.card === anchor).logit;
+    for (const x of ch) out.set(x.card, out.get(x.card) + (x.logit - a) / reps);
+  });
+  return out;
+}

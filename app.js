@@ -1,4 +1,5 @@
-import { Draft, feeds, choices, sample, SEATS, SLOTS } from './draft.js';
+import { Draft, feeds, choices, sample, rateCards, SEATS, SLOTS } from './draft.js';
+import { openPack } from './packs.js';
 
 const $ = (s) => document.querySelector(s);
 const COLORS = { W: 'White', U: 'Blue', B: 'Black', R: 'Red', G: 'Green' };
@@ -42,6 +43,8 @@ function run(f) {
 // history: every step's picks (seat 0 = you), so undo can replay the draft from its opening packs.
 let model, set, draft, openers, history, step, log, selected = null, busy = false, autodrafting = false;
 let draftId, draftTime, poolSeat = 0;
+// set is whichever set is on screen: the draft's (draftSet) or the sealed pool's (sealed.set).
+let mode = 'draft', draftSet, sealed;
 const setCache = {};
 const pref = {
   get(k, d) { try { return localStorage.getItem(`picknet.${k}`) ?? d; } catch { return d; } },
@@ -73,8 +76,9 @@ function beginStep() {
 async function newDraft() {
   autodrafting = false;
   $('#new').disabled = true;
-  set = await loadSet($('#set').value);
+  set = draftSet = await loadSet($('#set').value);
   await ready;
+  if (mode !== 'draft') return void ($('#new').disabled = false);
   draft = new Draft(set);
   openers = draft.openers.map((p) => p.slice());
   history = [];
@@ -90,15 +94,16 @@ async function newDraft() {
 function next() {
   selected = null;
   $('#undo').disabled = !history.length;
-  if (draft.done) return finish();
+  if (draft.done) return mode === 'draft' && finish();
+  step = beginStep();
+  if (mode !== 'draft') return; // an autodraft carrying on while sealed is on screen
   $('#end-view').hidden = $('#log-view').hidden = true;
   $('#pick-view').hidden = $('#pool-view').hidden = false;
-  step = beginStep();
   renderPack();
   renderGod();
   renderPool(0);
   step.done.then((s) => {
-    if (s !== step) return;
+    if (s !== step || mode !== 'draft') return;
     status(`PickNet: 8 seats in ${s.ms.toFixed(0)} ms · ${model.threads} thread${model.threads > 1 ? 's' : ''}`);
     renderPack();
     renderGod();
@@ -330,8 +335,9 @@ function colorChips(ids) {
   });
 }
 
-// A pile of picks in mana-value columns (lands first), each column sorted by colour.
-function pileCols(ids, small = false) {
+// A pile of picks in mana-value columns (lands first), each column sorted by colour (or by `order`,
+// a card id comparator). decorate(el, id) can add to each card.
+function pileCols(ids, small = false, decorate = null, order = null) {
   const cols = new Map([['Lands', []], ['0–1', []], ['2', []], ['3', []], ['4', []], ['5', []], ['6+', []]]);
   for (const id of ids) {
     const c = set.cards[id];
@@ -343,8 +349,12 @@ function pileCols(ids, small = false) {
     col.className = 'col';
     const h = document.createElement('h3');
     h.textContent = `${k} (${v.length})`;
-    v.sort((a, b) => colorKey(set.cards[a]) - colorKey(set.cards[b]));
-    col.append(h, ...v.map((id) => cardEl(id, small)));
+    v.sort(order || ((a, b) => colorKey(set.cards[a]) - colorKey(set.cards[b])));
+    col.append(h, ...v.map((id) => {
+      const el = cardEl(id, small);
+      decorate?.(el, id);
+      return el;
+    }));
     return col;
   });
 }
@@ -359,7 +369,7 @@ function renderPool(seatIdx) {
 
 function finish() {
   $('#pick-view').hidden = $('#god-view').hidden = true;
-  $('#end-view').hidden = $('#log-view').hidden = false;
+  $('#end-view').hidden = $('#log-view').hidden = $('#pool-view').hidden = false;
   const agree = log.filter((x) => x.rank === 0).length;
   const real = log.filter((x) => x.n > 1);
   $('#agree').textContent = `You took PickNet's top choice on ${agree} of ${log.length} picks ` +
@@ -451,6 +461,151 @@ async function copyDeck() {
   setTimeout(() => { btn.textContent = 'Copy decklist'; }, 1500);
 }
 
+// ---------------------------------------------------------------- sealed
+
+const SEALED_PACKS = 6, BASICS = { W: 'Plains', U: 'Island', B: 'Swamp', R: 'Mountain', G: 'Forest' };
+const isLand = (c) => /Land/.test(c.type) && !/Creature/.test(c.type);
+
+async function openSealed() {
+  $('#seal-open').disabled = true;
+  try {
+    const s = await loadSet($('#set').value);
+    const pool = Array.from({ length: SEALED_PACKS }, () => openPack(s)).flat();
+    status(`Opened ${SEALED_PACKS} ${s.code} packs · waiting for PickNet to rate the pool…`);
+    await ready;
+    const ratings = await rateCards(s, [...new Set(pool)], s.ctx[$('#skill').value], (f) => run(f).then((r) => r.logits));
+    const rank = new Map([...ratings].sort((a, b) => b[1] - a[1]).map(([c], i) => [c, i + 1]));
+    sealed = { set: s, deck: [], side: pool, basics: { W: 0, U: 0, B: 0, R: 0, G: 0 }, ratings, rank };
+    autoBuild();
+    if (mode === 'sealed') setMode('sealed');
+    status(`Sealed pool: ${pool.length} cards from ${SEALED_PACKS} ${s.code} packs, rated by PickNet`);
+  } finally {
+    $('#seal-open').disabled = false;
+  }
+}
+
+// Best two colours by the sum of PickNet's top 23 nonland ratings there (colourless cards count for
+// every pair), then those 23 and 17 basics split by the deck's coloured cards.
+function autoBuild() {
+  const all = [...sealed.deck, ...sealed.side], r = (c) => sealed.ratings.get(c);
+  let best = null;
+  for (let i = 0; i < 5; i++) {
+    for (let j = i + 1; j < 5; j++) {
+      const pair = 'WUBRG'[i] + 'WUBRG'[j];
+      const fits = all.filter((c) => !isLand(sealed.set.cards[c]) && [...sealed.set.cards[c].colors].every((x) => pair.includes(x)))
+        .sort((a, b) => r(b) - r(a)).slice(0, 23);
+      const score = fits.reduce((a, c) => a + r(c), 0) - 20 * (23 - fits.length);
+      if (!best || score > best.score) best = { pair, fits, score };
+    }
+  }
+  const deck = best.fits, side = all.slice();
+  for (const c of deck) side.splice(side.indexOf(c), 1);
+  const pips = { W: 0, U: 0, B: 0, R: 0, G: 0 };
+  for (const c of deck) for (const x of sealed.set.cards[c].colors) pips[x] += 1;
+  const total = Object.values(pips).reduce((a, b) => a + b, 0) || 1, n = 40 - deck.length;
+  const basics = Object.fromEntries(Object.entries(pips).map(([k, v]) => [k, Math.floor((n * v) / total)]));
+  const left = n - Object.values(basics).reduce((a, b) => a + b, 0);
+  Object.keys(pips).sort((a, b) => ((n * pips[b]) / total) % 1 - ((n * pips[a]) / total) % 1).slice(0, left).forEach((k) => { basics[k] += 1; });
+  Object.assign(sealed, { deck, side, basics });
+  renderSealed();
+}
+
+function moveCard(id, from, to) {
+  sealed[from].splice(sealed[from].indexOf(id), 1);
+  sealed[to].push(id);
+  renderSealed();
+}
+
+function renderSealed() {
+  if (!sealed || mode !== 'sealed') return;
+  set = sealed.set;
+  const n = Object.values(sealed.basics).reduce((a, b) => a + b, 0);
+  const lands = n + sealed.deck.filter((c) => isLand(set.cards[c])).length;
+  $('#deck-title').textContent = `Deck: ${sealed.deck.length + n} cards (${sealed.deck.length + n - lands} spells, ${lands} lands)`;
+  $('#deck-colors').replaceChildren(...colorChips(sealed.deck));
+  $('#side-title').textContent = `Sideboard (${sealed.side.length})`;
+  const byRating = (a, b) => sealed.ratings.get(b) - sealed.ratings.get(a);
+  const deco = (from, to) => (el, id) => {
+    const b = document.createElement('span');
+    b.className = 'rate';
+    b.textContent = `#${sealed.rank.get(id)}`;
+    el.title = `${set.cards[id].name} · PickNet's #${sealed.rank.get(id)} of ${sealed.rank.size} in this pool`;
+    el.append(b);
+    el.onclick = () => moveCard(id, from, to);
+  };
+  $('#deck').replaceChildren(...pileCols(sealed.deck, false, deco('deck', 'side'), byRating));
+  $('#side').replaceChildren(...pileCols(sealed.side, false, deco('side', 'deck'), byRating));
+  $('#basics').replaceChildren(...Object.entries(BASICS).map(([k, name]) => {
+    const el = document.createElement('span');
+    el.className = 'land';
+    const dot = document.createElement('i');
+    dot.style.background = `var(--${k})`;
+    const minus = document.createElement('button');
+    minus.className = 'ghost';
+    minus.textContent = '−';
+    minus.title = `One fewer ${name}`;
+    minus.disabled = !sealed.basics[k];
+    minus.onclick = () => { sealed.basics[k] -= 1; renderSealed(); };
+    const v = document.createElement('span');
+    v.className = 'n';
+    v.textContent = sealed.basics[k];
+    const plus = document.createElement('button');
+    plus.className = 'ghost';
+    plus.textContent = '+';
+    plus.title = `One more ${name}`;
+    plus.onclick = () => { sealed.basics[k] += 1; renderSealed(); };
+    el.append(dot, name, minus, v, plus);
+    return el;
+  }));
+  for (const id of ['#deck', '#side']) $(id).classList.toggle('show-rate', $('#seal-show').checked);
+}
+
+function arenaList(ids) {
+  const n = new Map();
+  for (const id of ids) n.set(id, (n.get(id) || 0) + 1);
+  return [...n].map(([id, k]) => `${k} ${set.cards[id].name}`);
+}
+
+async function copySealed() {
+  const basics = Object.entries(sealed.basics).filter(([, v]) => v).map(([k, v]) => `${v} ${BASICS[k]}`);
+  const text = ['Deck', ...arenaList(sealed.deck), ...basics, '', 'Sideboard', ...arenaList(sealed.side)].join('\n');
+  const btn = $('#seal-copy');
+  try {
+    await navigator.clipboard.writeText(text);
+    btn.textContent = 'Copied!';
+  } catch {
+    btn.textContent = 'Copy failed';
+  }
+  setTimeout(() => { btn.textContent = 'Copy deck'; }, 1500);
+}
+
+// ---------------------------------------------------------------- modes
+
+const DRAFT_VIEWS = ['#pick-view', '#god-view', '#end-view', '#pool-view', '#log-view', '#intro'];
+
+function setMode(m) {
+  mode = m;
+  pref.set('mode', m);
+  document.body.dataset.mode = m;
+  for (const b of $('#mode').children) b.classList.toggle('on', b.dataset.mode === m);
+  if (m === 'sealed') {
+    for (const v of DRAFT_VIEWS) $(v).hidden = true;
+    $('#sealed-view').hidden = !sealed;
+    $('#seal-intro').hidden = !!sealed;
+    if (sealed) { set = sealed.set; renderSealed(); }
+    return;
+  }
+  $('#sealed-view').hidden = $('#seal-intro').hidden = true;
+  if (!draft) { $('#intro').hidden = false; return; }
+  set = draftSet;
+  if (draft.done) return finish();
+  $('#pick-view').hidden = $('#pool-view').hidden = false;
+  renderPack();
+  renderGod();
+  renderPool(0);
+  step.done.then((s) => { if (s === step && mode === 'draft') { renderPack(); renderGod(); } });
+}
+
 // ---------------------------------------------------------------- controls
 
 async function init() {
@@ -471,10 +626,23 @@ async function init() {
   $('#rest').onclick = autodraftRest;
   $('#undo').onclick = undo;
   $('#copy-deck').onclick = copyDeck;
+  $('#seal-open').onclick = openSealed;
+  $('#seal-auto').onclick = () => sealed && autoBuild();
+  $('#seal-clear').onclick = () => {
+    if (!sealed) return;
+    sealed.side.push(...sealed.deck.splice(0));
+    for (const k in sealed.basics) sealed.basics[k] = 0;
+    renderSealed();
+  };
+  $('#seal-copy').onclick = () => sealed && copySealed();
+  $('#seal-show').checked = pref.get('sealShow', '1') === '1';
+  $('#seal-show').addEventListener('change', () => { pref.set('sealShow', $('#seal-show').checked ? '1' : '0'); renderSealed(); });
+  for (const b of $('#mode').children) b.onclick = () => setMode(b.dataset.mode);
+  setMode(pref.get('mode', 'draft') === 'sealed' ? 'sealed' : 'draft');
   $('#export-csv').onclick = exportCsv;
   $('#export-jsonl').onclick = exportJsonl;
   document.addEventListener('keydown', (e) => {
-    if (e.target.closest('select, input, textarea')) return;
+    if (e.target.closest('select, input, textarea') || mode !== 'draft') return;
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
       e.preventDefault();
       undo();
@@ -486,6 +654,7 @@ async function init() {
       renderPack();
     }
   });
+  $('#seal-open').disabled = false;
   await ready;
   $('#new').disabled = false;
 }
