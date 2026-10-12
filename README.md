@@ -30,8 +30,8 @@ Both builds get their lands from the same rules (deck.js manaBase), working from
 - Land count from the curve: 17 at a mean mana value of 2.9, one more or fewer per 0.4, and half a
   land fewer per mana rock, mana creature or landcycler, held to 16-18.
 - Nonbasic lands from the pool only when they make two of the deck's colours (main or splash). A
-  basic-fetcher (Terramorphic Expanse) or a choose-a-colour land (Mirage Mesa) only goes in with a
-  splash. At most three lands that enter tapped. A dual that makes one of the deck's colours and one
+  basic-fetcher (Terramorphic Expanse) only goes in a deck of three colours or more, and a
+  choose-a-colour land (Mirage Mesa) only with a splash. At most three lands that enter tapped. A dual that makes one of the deck's colours and one
   it doesn't play is a tapped basic, and stays in the sideboard. Filter lands and lands whose mana only
   casts some spells don't count as fixing, but can still go in as utility lands.
 - Utility lands (Mutavault, Hidden Necropolis, the BLB villages) make only colourless mana or only the
@@ -72,6 +72,14 @@ lands with the mana base rules above, so the search can move into and out of a s
 settles, the land count is set to what the curve asks for: the best spell is added or dropped, and the
 climb runs again. A build takes about 0.7 s. The card labels show what each spell and utility land is
 worth to the current deck in win-rate points.
+
+"Best deck by colours" runs the same search aimed at each colour combination: every pair of main colours
+with no splash and with its best splash, and every three main colours. It lists the results by predicted
+win rate, next to the "Build best deck" result, and clicking one loads it. The pickers above the list build
+any main colours with no splash, the best splash, or a splash of a chosen colour. The search reaches a
+target by penalising a deck for each card a main colour is short of four, and for a requested splash it
+doesn't have. Colours outside the target are off limits, and a splash is one colour of at most three
+cards. All 30 combinations take about a second, built one at a time in the background.
 
 A search finds a model's blind spots, so the builder has guardrails:
 - The pair term, each deck feature and the affinity are clamped to the 0.5-99.5% range of real

@@ -176,8 +176,9 @@ export class DeckModel {
 //   - Land count from the curve: 17 at a mean mana value of 2.9 (landcyclers left out), one more or fewer per 0.4,
 //     half a land fewer per mana rock, dork or landcycler, held to 16-18.
 //   - Nonbasics from the pool only when they help: a land making two of the deck's colours (main or splash), a
-//     basic-fetcher or choose-a-colour land only with a splash, at most three that enter tapped. A dual making one of
-//     the deck's colours and one it doesn't play is a tapped basic, and stays in the sideboard.
+//     basic-fetcher only in three colours or more, a choose-a-colour land only with a splash, at most three that
+//     enter tapped. A dual making one of the deck's colours and one it doesn't play is a tapped basic, and stays in
+//     the sideboard.
 //   - Utility lands (utilityLands: a nonbasic making one of the deck's colours or only colourless mana, Mutavault
 //     or Hidden Necropolis) are the caller's choice, at most two, each in place of a basic: the deck model's build
 //     plays one when the model rates the deck higher with it, the PickNet build when PickNet rates it as highly as
@@ -234,7 +235,7 @@ const nonbasicLand = (c) => isLand(c) && !/Basic/.test(c.type);
 // The colours a fixing land gives the deck, [] for a land that isn't one.
 function fixes(c, { used, splash }) {
   if (!c.makes) return [];
-  const on = c.makes === '*' ? (splash.length ? used : []) : c.makes === '?' ? splash.slice(0, 1)
+  const on = c.makes === '*' ? (used.length >= 3 ? used : []) : c.makes === '?' ? splash.slice(0, 1)
     : used.filter((k) => c.makes.includes(k));
   return on.length >= 2 || (/[*?]/.test(c.makes) && on.length) ? on : [];
 }
@@ -340,15 +341,38 @@ const swapped = (spells, out, inn) => {
   return sp;
 };
 
+// A colour target for the search: want = {main: 'WU' (the main colours), splash: '' (none), 'B' (that colour) or '*'
+// (any one colour)}. misfit says how far a deck's spells are from it: 0 when they fit, one more per card a main colour
+// is short of four and one for a splash asked for but missing; null when they can't fit (a colour the target doesn't
+// allow, two splash colours, or a splash of more than three cards). The search climbs value = logit - PENALTY * misfit,
+// so it walks into the target from a start outside it. want null: anything goes.
+const PENALTY = 10;
+function misfit(set, spells, want) {
+  if (!want) return 0;
+  const uses = {};
+  for (const [id, n] of spells) for (const k of Object.keys(cardPips(set.cards[id]))) uses[k] = (uses[k] || 0) + n;
+  const extra = Object.keys(uses).filter((k) => !want.main.includes(k));
+  if (extra.length > (want.splash ? 1 : 0)) return null;
+  if (extra.length && ((want.splash !== '*' && extra[0] !== want.splash) || uses[extra[0]] > 3)) return null;
+  let v = 0;
+  for (const k of want.main) v += Math.max(0, 4 - (uses[k] || 0));
+  if (want.splash && !extra.length) v += 1;
+  return v;
+}
+
+// The colours a target lets a spell use, or null for any.
+const allowed = (want) => (!want || want.splash === '*' ? null : want.main + want.splash);
+
 // The states one move from st: each spell swap (a deck spell out, a pool spell in), and each utility land in (in
 // place of a basic) or out.
-function* moves(model, st, avail, lands) {
-  const uses = {}, colsOf = (id) => Object.keys(cardPips(model.set.cards[id]));
+function* moves(model, st, avail, lands, want) {
+  const uses = {}, colsOf = (id) => Object.keys(cardPips(model.set.cards[id])), ok = allowed(want);
   for (const [id, n] of st.spells) for (const k of colsOf(id)) uses[k] = (uses[k] || 0) + n;
   for (const out of st.spells.keys()) {
     const left = new Set(Object.keys(uses).filter((k) => uses[k] > (colsOf(out).includes(k) ? 1 : 0)));
     for (const [inn, a] of avail) {
       if (inn === out || (st.spells.get(inn) || 0) >= a) continue;
+      if (ok && colsOf(inn).some((k) => !ok.includes(k))) continue;
       // a swap to five colours can't be ok: skip it before building its mana base
       if (new Set([...left, ...colsOf(inn)]).size > MAX_COLORS) continue;
       yield { ...st, spells: swapped(st.spells, out, inn) };
@@ -360,52 +384,62 @@ function* moves(model, st, avail, lands) {
   }
 }
 
-// Best-improvement hill climbing over moves until none helps. st is updated in place; returns its logit.
-function climb(model, st, avail, lands) {
-  let x = deckOf(model, st, lands), g = model.aggregate(x), z = model.logit(g);
+// A state's value to the search from its logit z (null if z is): see misfit.
+function valueOf(model, st, z, want) {
+  const m = z === null ? null : misfit(model.set, st.spells, want);
+  return m === null ? null : z - PENALTY * m;
+}
+
+// Best-improvement hill climbing over moves until none helps. st is updated in place; returns its value.
+function climb(model, st, avail, lands, want) {
+  // a start whose mana isn't ok (a three-colour start of basics) is worth nothing: any ok deck beats it
+  let x = deckOf(model, st, lands), g = model.aggregate(x);
+  let v = (x.ok ? valueOf(model, st, model.logit(g), want) : null) ?? -Infinity;
   const tmp = { s: new Float64Array(model.D), vv: 0, ae: 0 };
   for (let iter = 0; iter < 200; iter++) {
     let best = null;
-    for (const next of moves(model, st, avail, lands)) {
-      const zi = rescore(model, g, x, deckOf(model, next, lands), tmp);
-      if (zi !== null && zi > z + 1e-9 && (!best || zi > best.z)) best = { next, z: zi };
+    for (const next of moves(model, st, avail, lands, want)) {
+      const vi = valueOf(model, next, rescore(model, g, x, deckOf(model, next, lands), tmp), want);
+      if (vi !== null && vi > v + 1e-9 && (!best || vi > best.v)) best = { next, v: vi };
     }
     if (!best) break;
     Object.assign(st, best.next);
     x = deckOf(model, st, lands);
     g = model.aggregate(x);
-    z = model.logit(g);
+    v = best.v;
   }
-  return z;
+  return v;
 }
 
 // Climb, then bring the land count to what the curve asks (landCount) by the best spell added or dropped, and climb
 // again, a few rounds at most. A curve on the edge (23 spells want 18 lands, the best 22 of them 17) settles on the
-// more lands. Returns the logit.
-function settle(model, st, avail, lands) {
-  let z = climb(model, st, avail, lands);
-  const seen = new Set([st.n]);
+// more lands. Returns the value.
+function settle(model, st, avail, lands, want) {
+  let v = climb(model, st, avail, lands, want);
+  const seen = new Set([st.n]), ok = allowed(want);
   for (let round = 0; round < 4; round++) {
-    const want = landCount(model.set, st.spells);
-    if (want === st.n) break;
-    const n = st.n + Math.sign(want - st.n), back = seen.has(n);
+    const target = landCount(model.set, st.spells);
+    if (target === st.n) break;
+    const n = st.n + Math.sign(target - st.n), back = seen.has(n);
     if (back && n < st.n) break;
     seen.add(n);
     const x = deckOf(model, st, lands), g = model.aggregate(x);
     const tmp = { s: new Float64Array(model.D), vv: 0, ae: 0 };
+    const fits = (id) => !ok || Object.keys(cardPips(model.set.cards[id])).every((k) => ok.includes(k));
     const tries = n > st.n ? [...st.spells.keys()].map((out) => swapped(st.spells, out, null))
-      : [...avail].filter(([id, a]) => (st.spells.get(id) || 0) < a).map(([id]) => swapped(st.spells, null, id));
+      : [...avail].filter(([id, a]) => (st.spells.get(id) || 0) < a && fits(id)).map(([id]) => swapped(st.spells, null, id));
     let best = null;
     for (const spells of tries) {
-      const next = { ...st, spells, n }, zi = rescore(model, g, x, deckOf(model, next, lands), tmp);
-      if (zi !== null && (!best || zi > best.z)) best = { next, z: zi };
+      const next = { ...st, spells, n };
+      const vi = valueOf(model, next, rescore(model, g, x, deckOf(model, next, lands), tmp), want);
+      if (vi !== null && (!best || vi > best.v)) best = { next, v: vi };
     }
     if (!best) break;
     Object.assign(st, best.next);
-    if (back) return best.z;
-    z = climb(model, st, avail, lands);
+    if (back) return best.v;
+    v = climb(model, st, avail, lands, want);
   }
-  return z;
+  return v;
 }
 
 // A starting deck in colours `cols`: its best 23 spells there by power and 17 lands (more if it has fewer spells).
@@ -425,27 +459,34 @@ function seed(model, avail, cols, min = DECK_SIZE - LANDS[1]) {
   return { spells: x, n: DECK_SIZE - top.length, util: [] };
 }
 
-// Search for the pool's best 40-card deck under the model: a climb from each one- and two-colour start, then a few
-// random kicks (three swaps) and re-climbs from the best deck found. Returns {counts, logit, winRate}.
-export function buildDeck(model, pool, { kicks = 8, rng = Math.random } = {}) {
+// Search for the pool's best 40-card deck under the model: a climb from each one- and two-colour start (or from the
+// target's main colours), then a few random kicks (three swaps) and re-climbs from the best deck found. Returns
+// {counts, logit, winRate}; with a colour target (want, see misfit), null when the pool has no deck that fits it.
+export function buildDeck(model, pool, { kicks = 8, rng = Math.random, want = null } = {}) {
   const { avail, lands } = candidates(model, pool);
   const starts = [];
-  for (let i = 0; i < 5; i++) {
-    starts.push(COLORS[i]);
-    for (let j = i + 1; j < 5; j++) starts.push(COLORS[i] + COLORS[j]);
+  if (want) starts.push(want.main);
+  else {
+    for (let i = 0; i < 5; i++) {
+      starts.push(COLORS[i]);
+      for (let j = i + 1; j < 5; j++) starts.push(COLORS[i] + COLORS[j]);
+    }
   }
-  const done = (st, z) => ({ counts: deckOf(model, st, lands), logit: z, winRate: model.winRate(z) });
+  const done = (st) => {
+    const counts = deckOf(model, st, lands), logit = model.logit(model.aggregate(counts));
+    return { counts, logit, winRate: model.winRate(logit) };
+  };
   let best = null;
   for (const cols of starts) {
     if (!cols.split('').every((c) => model.basicIds[c] !== undefined)) continue;
     const st = seed(model, avail, cols);
-    if (!st || !deckOf(model, st, lands).ok) continue;
-    const z = settle(model, st, avail, lands);
-    if (!best || z > best.z) best = { st, z };
+    // a target's start may be off (three colours on basics alone) and climb into shape
+    if (!st || (!want && !deckOf(model, st, lands).ok)) continue;
+    const v = settle(model, st, avail, lands, want);
+    if (v > -Infinity && (!best || v > best.v)) best = { st, v };
   }
-  if (!best) { // no legal two-colour deck in this pool: its best spells in any colours, unsearched
-    const st = seed(model, avail, COLORS, 0);
-    return done(st, model.logit(model.aggregate(deckOf(model, st, lands))));
+  if (!best) { // no legal start in this pool: none for a target, or for the open search its best spells, unsearched
+    return want ? null : done(seed(model, avail, COLORS, 0));
   }
   const ids = [...avail.keys()];
   for (let t = 0; t < kicks; t++) {
@@ -455,12 +496,29 @@ export function buildDeck(model, pool, { kicks = 8, rng = Math.random } = {}) {
       const inn = ids[Math.floor(rng() * ids.length)];
       if (inn === out || (st.spells.get(inn) || 0) >= avail.get(inn)) continue;
       const next = { ...st, spells: swapped(st.spells, out, inn) };
-      if (deckOf(model, next, lands).ok) Object.assign(st, next);
+      if (deckOf(model, next, lands).ok && misfit(model.set, next.spells, want) !== null) Object.assign(st, next);
     }
-    const z = settle(model, st, avail, lands);
-    if (z > best.z + 1e-9) best = { st, z };
+    const v = settle(model, st, avail, lands, want);
+    if (v > best.v + 1e-9) best = { st, v };
   }
-  return done(best.st, best.z);
+  if (misfit(model.set, best.st.spells, want) !== 0 || !deckOf(model, best.st, lands).ok) return null;
+  return done(best.st);
+}
+
+// The best deck for each colour combination: every pair of main colours with no splash and with its best splash,
+// then every three main colours (which only make it with enough fixing). Yields {want, deck} as each is built, deck
+// null for a combination the pool can't make. rng(key) gives each search its random numbers.
+export function* deckPerColors(model, pool, rng) {
+  const combos = [];
+  for (let i = 0; i < 5; i++) for (let j = i + 1; j < 5; j++) combos.push(COLORS[i] + COLORS[j]);
+  const wants = combos.flatMap((main) => [{ main, splash: '' }, { main, splash: '*' }]);
+  for (let i = 0; i < 5; i++) for (let j = i + 1; j < 5; j++) for (let k = j + 1; k < 5; k++) {
+    wants.push({ main: COLORS[i] + COLORS[j] + COLORS[k], splash: '' });
+  }
+  for (const want of wants) {
+    const key = want.main + (want.splash ? `+${want.splash}` : '');
+    yield { want, deck: buildDeck(model, pool, { kicks: 3, rng: rng(key), want }) };
+  }
 }
 
 // What each card is worth to the deck, in win-rate points. A deck spell: how much the deck loses if it is swapped

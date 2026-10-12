@@ -134,3 +134,17 @@ footer a { color: inherit; }
 }
 #seed { width: 8ch; }
 #seed-used { font-variant-numeric: tabular-nums; }
+.combos { margin: 0 0 14px; }
+.combos summary { font-size: 14px; font-weight: 600; cursor: pointer; margin-bottom: 8px; }
+.combo-pick { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 14px; margin-bottom: 8px; }
+.combo-cols { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.color-pick { display: inline-flex; gap: 5px; align-items: center; padding: 2px 8px; font-size: 13px; }
+.color-pick.on { background: var(--accent); color: var(--accent-ink); }
+.color-pick i, .dots i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 1px solid rgba(0, 0, 0, .2); }
+.dots { display: inline-flex; gap: 2px; margin-right: 6px; vertical-align: -1px; }
+.combo-table { max-width: 560px; }
+.combo-table tbody tr { cursor: pointer; }
+.combo-table tbody tr:hover { background: var(--bg); }
+.combo-table tbody tr.on td { font-weight: 700; }
+.combo-table .muted, .combo-note { color: var(--muted); }
+.combo-note { font-size: 13px; margin: 6px 0 0; }

@@ -1,6 +1,6 @@
 import { Draft, feeds, choices, sample, rateCards, SEATS, SLOTS } from './draft.js';
 import { newSeed, openPack, seededRng } from './packs.js';
-import { DeckModel, buildDeck, cardValues, isLand, landCount, manaBase, utilityLands, BASICS } from './deck.js';
+import { DeckModel, buildDeck, cardValues, deckPerColors, isLand, landCount, manaBase, utilityLands, BASICS } from './deck.js';
 
 const $ = (s) => document.querySelector(s);
 const COLORS = { W: 'White', U: 'Blue', B: 'Black', R: 'Red', G: 'Green' };
@@ -546,9 +546,12 @@ async function makeBuilder(s, pool, event, root, seed) {
   q('.b-clear').onclick = () => {
     b.side.push(...b.deck.splice(0));
     for (const k in b.basics) b.basics[k] = 0;
+    b.comboKey = null;
     renderBuilder(b);
   };
   q('.b-copy').onclick = () => copyBuilder(b);
+  q('.combos').hidden = true;
+  if (b.model) setupCombos(b);
   const labels = q('.b-labels');
   labels.value = pref.get('labels', 'value');
   labels.onchange = () => { pref.set('labels', labels.value); renderBuilder(b); };
@@ -581,6 +584,8 @@ function buildBest(b) {
   const t0 = performance.now();
   const built = buildDeck(b.model, b.pool, { rng: seededRng(`${b.seed}:build`) });
   setDeck(b, built.counts);
+  b.bestRow = { want: wantOf(b, built), deck: built, overall: true };
+  b.comboKey = 'best';
   renderBuilder(b);
   status(`Deck model built the best deck it found in ${(performance.now() - t0).toFixed(0)} ms`);
 }
@@ -618,13 +623,136 @@ function buildPickNet(b) {
   deck = deck.concat(lands);
   const side = all.filter(notBasic(b.set));
   for (const c of deck) side.splice(side.indexOf(c), 1);
-  Object.assign(b, { deck, side, basics });
+  Object.assign(b, { deck, side, basics, comboKey: null });
   renderBuilder(b);
+}
+
+// ---------------------------------------------------------------- best deck by colours
+
+// The deck model's best deck for each colour combination (deck.js deckPerColors), built a combination at a time in the
+// background and listed by predicted win rate; clicking one loads it. Above the list, pickers build any main colours
+// with or without a splash.
+const comboKey = (want) => want.main + (want.splash ? `+${want.splash}` : '');
+const COMBOS_SHOWN = 8;
+
+// A built deck's colours as a target: main colours (four cards or more) and the rest as its splash.
+function wantOf(b, deck) {
+  const uses = {};
+  for (const [id, n] of deck.counts) for (const k of Object.keys(b.set.cards[id].pips || {})) uses[k] = (uses[k] || 0) + n;
+  const cols = [...'WUBRG'].filter((k) => uses[k]);
+  const main = cols.filter((k) => uses[k] >= 4).join('');
+  return { main, splash: cols.filter((k) => !main.includes(k)).join('') };
+}
+
+function setupCombos(b) {
+  const q = (sel) => b.root.querySelector(sel);
+  q('.combos').hidden = false;
+  b.combos = [];
+  b.pick = new Set();
+  q('.combo-cols').replaceChildren(...Object.entries(COLORS).map(([k, name]) => {
+    const btn = document.createElement('button');
+    btn.className = 'ghost color-pick';
+    btn.title = name;
+    btn.innerHTML = `<i style="background:var(--${k})"></i>${name}`;
+    btn.onclick = () => {
+      b.pick.has(k) ? b.pick.delete(k) : b.pick.add(k);
+      btn.classList.toggle('on', b.pick.has(k));
+      q('.combo-build').disabled = !b.pick.size;
+    };
+    return btn;
+  }));
+  q('.combo-build').disabled = true;
+  q('.combo-build').onclick = () => {
+    const want = { main: [...'WUBRG'].filter((k) => b.pick.has(k)).join(''), splash: q('.combo-splash').value };
+    if (want.splash && want.splash !== '*' && want.main.includes(want.splash)) want.splash = '';
+    const key = comboKey(want);
+    let row = b.combos.find((r) => comboKey(r.want) === key);
+    if (!row) {
+      row = { want, deck: buildDeck(b.model, b.pool, { kicks: 3, rng: seededRng(`${b.seed}:${key}`), want }) };
+      b.combos.push(row);
+    }
+    if (!row.deck) {
+      status(`No ${describeWant(want)} deck in this pool: too few playables there, or not enough fixing`);
+      return renderCombos(b);
+    }
+    loadCombo(b, row);
+  };
+  fillCombos(b);
+}
+
+// Each combination in turn, yielding to the page between them.
+async function fillCombos(b) {
+  const gen = deckPerColors(b.model, b.pool, (key) => seededRng(`${b.seed}:${key}`));
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 0));
+    if (b.root.builder !== b) return; // a new sealed pool replaced this one
+    const { value, done } = gen.next();
+    if (done) break;
+    if (!b.combos.some((r) => comboKey(r.want) === comboKey(value.want))) b.combos.push(value);
+    renderCombos(b);
+  }
+  b.combosDone = true;
+  renderCombos(b);
+}
+
+// The colours a deck's spells use beyond its main ones (a splash).
+function splashOf(b, deck, main) {
+  const out = new Set();
+  for (const [id] of deck.counts) for (const k of Object.keys(b.set.cards[id].pips || {})) if (!main.includes(k)) out.add(k);
+  return [...out].join('');
+}
+
+const describeWant = (want) => [...want.main].map((k) => COLORS[k]).join('-') +
+  (want.splash === '*' ? ' with a splash' : want.splash ? ` with a ${COLORS[want.splash].toLowerCase()} splash` : '');
+
+function loadCombo(b, row) {
+  setDeck(b, row.deck.counts);
+  b.comboKey = row.overall ? 'best' : comboKey(row.want);
+  renderBuilder(b);
+  status(`Deck model: ${describeWant(row.want)}, ${(100 * row.deck.winRate).toFixed(1)}% predicted win rate`);
+}
+
+const dots = (cols) => [...cols].map((k) => `<i style="background:var(--${k})" title="${COLORS[k]}"></i>`).join('');
+
+function renderCombos(b) {
+  if (!b.combos || b.root.builder !== b) return;
+  const q = (sel) => b.root.querySelector(sel);
+  const made = b.combos.filter((r) => r.deck).concat(b.bestRow ? [b.bestRow] : [])
+    .sort((x, y) => y.deck.winRate - x.deck.winRate);
+  const top = made[0]?.deck.winRate;
+  const isOn = (row) => (row.overall ? 'best' : comboKey(row.want)) === b.comboKey;
+  // the top few, plus the deck on screen; all of them on request
+  const shown = b.allCombos ? made : made.filter((row, i) => i < COMBOS_SHOWN || isOn(row));
+  q('.combo-table tbody').replaceChildren(...shown.map((row) => {
+    const tr = document.createElement('tr');
+    const splash = row.overall ? row.want.splash : row.want.splash ? splashOf(b, row.deck, row.want.main) : '';
+    tr.className = isOn(row) ? 'on' : '';
+    tr.title = row.overall ? 'Load the deck Build best deck found (any colours)' : `Load the best ${describeWant(row.want)} deck`;
+    tr.innerHTML = `<td><span class="dots">${dots(row.want.main)}</span>${[...row.want.main].map((k) => COLORS[k]).join('-')}` +
+      `${row.overall ? ' <span class="muted">(Build best deck)</span>' : ''}</td>` +
+      `<td>${splash ? `<span class="dots">${dots(splash)}</span>${[...splash].map((k) => COLORS[k]).join(', ')}` : '—'}</td>` +
+      `<td class="num">${(100 * row.deck.winRate).toFixed(1)}%</td>` +
+      `<td class="num muted">${row.deck.winRate === top ? 'best' : `−${(100 * (top - row.deck.winRate)).toFixed(1)}`}</td>`;
+    tr.onclick = () => loadCombo(b, row);
+    return tr;
+  }));
+  const missing = b.combos.length - made.length + (b.bestRow ? 1 : 0);
+  const note = q('.combo-note');
+  note.textContent = (b.combosDone ? '' : `Building… ${b.combos.length} combinations so far. `) +
+    (missing ? `${missing} combination${missing > 1 ? 's' : ''} had no deck (too few playables, or not enough fixing for three colours). ` : '');
+  if (made.length > COMBOS_SHOWN) {
+    const more = document.createElement('button');
+    more.className = 'ghost';
+    more.textContent = b.allCombos ? 'Show fewer' : `Show all ${made.length}`;
+    more.onclick = () => { b.allCombos = !b.allCombos; renderCombos(b); };
+    note.append(more);
+  }
 }
 
 function moveCard(b, id, from, to) {
   b[from].splice(b[from].indexOf(id), 1);
   b[to].push(id);
+  b.comboKey = null;
   renderBuilder(b);
 }
 
@@ -708,6 +836,7 @@ function renderBuilder(b) {
     return btn;
   }));
   for (const sel of ['.deck', '.side']) q(sel).classList.toggle('show-rate', label !== 'none');
+  renderCombos(b);
 }
 
 function arenaList(ids) {

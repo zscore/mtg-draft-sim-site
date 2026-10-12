@@ -127,6 +127,27 @@
       </label>
     </div>
     <p class="deck-score"></p>
+    <details class="combos" open hidden>
+      <summary>Best deck by colours</summary>
+      <div class="combo-pick">
+        Build in <span class="combo-cols"></span>
+        <select class="combo-splash" title="Splash: up to three cards of one more colour">
+          <option value="">no splash</option>
+          <option value="*">the best splash</option>
+          <option value="W">a white splash</option>
+          <option value="U">a blue splash</option>
+          <option value="B">a black splash</option>
+          <option value="R">a red splash</option>
+          <option value="G">a green splash</option>
+        </select>
+        <button class="combo-build ghost" disabled>Build</button>
+      </div>
+      <table class="combo-table">
+        <thead><tr><th>Main colours</th><th>Splash</th><th>Predicted win rate</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <p class="combo-note"></p>
+    </details>
     <div class="basics"></div>
     <div class="deck pool"></div>
     <div class="bar">
