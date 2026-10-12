@@ -13,14 +13,20 @@ from export_model import PICKNET, SHARDS, SITE, load
 NAMES = ("idx", "cnt", "pick", "oidx", "ocnt", "ctx", "sid")
 
 
-def main(path=str(PICKNET / "results/picknet_all/models/all_d256_ep3.pt")):
+def main(path=str(PICKNET / "results/picknet_all/models/frahob_freeze.pt")):
     m = load(path)
+    pad = len(np.load(SHARDS / "cards.npz")["name_id"])  # the current card table's padding id
     out = []
-    for code in ("BLB", "LCI", "ECL"):
+    for code in ("BLB", "LCI", "ECL", "FRA", "HOB"):
         d = SHARDS / f"{code}.PremierDraft"
-        n = json.loads((d / "info.json").read_text())["n_picks"]
+        info = json.loads((d / "info.json").read_text())
+        n = info["n_picks"]
         rows = np.flatnonzero(np.load(d / "split.npy") == 2)[:3]
         a = {k: np.asarray(np.load(d / f"{k}.npy", mmap_mode="r")[rows]) for k in NAMES}
+        # A set's shards keep the padding id of the card table they were built with (BLB's: 5317, from before
+        # FRA and HOB); in today's table that id is a real card, so move it to the current padding id.
+        for k in ("idx", "pick", "oidx"):
+            a[k] = np.where(a[k] == info["pad"], pad, a[k])
         with torch.no_grad():
             ref = m(*(torch.from_numpy(a[k].astype(np.float32 if k == "ctx" else np.int64)) for k in NAMES)).numpy()
         for b in range(len(rows)):

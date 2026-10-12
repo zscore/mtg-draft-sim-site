@@ -1,7 +1,8 @@
 // Booster generation from a set's collation (data/{SET}.json "collation", built from
 // tools/collation.py): pick a layout, pick each slot's sheet by its weights, then a card from that
 // sheet. Cards within a slot are distinct; "dedupe" slots also avoid cards already in the pack, and
-// sets flagged "unique" avoid repeats anywhere.
+// sets flagged "unique" avoid repeats anywhere. A "pair" slot adds each card's partner too (collation.pairs,
+// card id -> partner id: Reality Fracture's echoed pairs).
 // Commons are colour-balanced (see balanced()). tools/verify_packs.py checks the output
 // against real Arena packs.
 
@@ -128,6 +129,7 @@ export function openPack(set, rng = Math.random) {
       while ((mine.includes(c) || ((col.unique || sl.dedupe) && pack.includes(c))) && ++tries < 100);
       mine.push(c);
       pack.push(c);
+      if (sl.pair) { mine.push(col.pairs[c]); pack.push(col.pairs[c]); }
     }
   }
   return pack;

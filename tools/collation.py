@@ -503,3 +503,108 @@ SETS["TMT"] = play_booster(
     notes=["Land slot is 55/45 dual/basic on Arena, not paper's 60/40 (17Lands: 0.553 duals per pack)."],
     sources=["teenage-mutant-ninja-turtles"],
 )
+
+SETS["HOB"] = play_booster(
+    "HOB", 188,
+    # "7 Common cards" (60 commons; scene cards are the same cards on Arena), "3 Uncommon cards"
+    commons=[(7, {"C": 1})],
+    # "A rare (82.9%) or mythic rare (11.1%) card from the main set", plus rare scene (1.8%) and Dragon
+    # hoard (2.3%) printings
+    rare={"R": 82.9 + 1.8 + 2.3, "M": 11.1},
+    # "A common (74.17%), uncommon (3.9%), rare (17.3%), or mythic rare (2.3%)": mostly commons, unlike other
+    # Play Boosters' wildcards, and 17Lands agrees.
+    wild={"C": 74.17, "U": 3.9, "R": 17.3, "M": 2.3},
+    foil={"C": 59.8, "U": 29.3, "R": 7.1, "M": 1},
+    # default and Middle-earth journey basics 50% (non-foil and foil), "common dual land" 50%
+    land={"L": 50, "B": 50},
+    sheets={"C": q("e:hob r:c cn<=188 -t:basic", minus=["L"]),
+            "L": q(cns("hob", [182, 183, 185, 186, 188])), "B": basics("hob")},
+    unique=True,
+    balance={"cover": True, "cap": 2},
+    arena=dict(rare={"R": 87.5, "M": 12.5}, wild={"C": 75.1, "U": 4.1, "R": 18.1, "M": 2.6},
+               foil={"C": 60.6, "U": 30.6, "R": 7.7, "M": 1.1}),
+    sources=["the-hobbit"],
+)
+
+# Reality Fracture's echoed pairs: two versions of one character (or the "Way of the" mirror spells), same
+# rarity. Paired from 17Lands packs: a card shows up with its partner 6-8 times as often as with any other.
+FRA_PAIRS = [
+    ('Ajani Resolute', 'Ajani Unrelenting'),
+    ('Arni, Renowned Champion', 'Arni, Humble Scribe'),
+    ('Chandra, Chill of Compliance', 'Chandra, Torch of Defiance'),
+    ('Danitha, Sword of Hope', 'Danitha, Spear of Agony'),
+    ('Edgar, Moonlit Sovereign', 'Edgar, Ancient Bloodlord'),
+    ('Fblthp, Knows the Way', 'Fblthp, Impossibly Lost'),
+    ('Gallia, Tragic Host', 'Gallia, the Merrymaker'),
+    ('Garruk, Veiled Butcher', 'Garruk, Curse Breaker'),
+    ('Geist of Saint Thalia', 'Thalia, the Survivor'),
+    ('Ghalta the Unstoppable', 'Ghalta the Immovable'),
+    ("Gideon's Memorial", 'Gideon the Oathless'),
+    ('Hapatra, the Desert Frost', 'Hapatra, the Desert Fang'),
+    ('Jiang Yanggu, Alone', 'Jiang Yanggu, Never Alone'),
+    ('Karn, Argent Defender', 'Karn, Gilded Guardian'),
+    ('Kiora of Fire and Ashes', 'Kiora of Salt and Sand'),
+    ('Koth, the Geomancer', 'Koth of the Homestead'),
+    ('Liliana the Repentant', 'Liliana the Faultless'),
+    ('Loot, the Anomaly', 'Loot, the Nexus'),
+    ('Lyra, Archangel of Dawn', 'Lyra, Tolarian Archangel'),
+    ('Mabel, Valley Hero', 'Mabel, Bitter Recluse'),
+    ('Marwyn, the Preserver', 'Marwyn, the Clearcutter'),
+    ('Massacre Girl, Most Wanted', 'Rescue Girl, First Responder'),
+    ('Pia, Aether Ascetic', 'Pia, Determined Rebuilder'),
+    ('Proft, Consulting Detective', 'Proft, Sinister Mastermind'),
+    ('Ruric Thar, Biomagus', 'Ruric Thar, Magecrusher'),
+    ('Saheeli, Consul of Oversight', 'Saheeli, Jewel of Avishkar'),
+    ('Samut, Tyrant of Naktamun', "Samut, Hazoret's Champion"),
+    ('Tam, the Possibility', 'Jace, Reality Sculptor'),
+    ('Tetsuko Umezawa, Fugitive', 'Tetsuko Umezawa, Pursuer'),
+    ('Teyo, Diamondblade Mage', 'Teyo, Lightshield Expert'),
+    ('Tinybones, Pocket Nuisance', 'Titanbones, Towering Heart'),
+    ('Tomik, Izzet Sparkmage', 'Tomik, Orzhov Lawmage'),
+    ('Traxos, Scourge Eternal', 'Traxos, Academy Guardian'),
+    ('Vraska, Soul of Stone', 'Vraska, the Cutting Glare'),
+    ('Way of the Cryomancer', 'Way of the Pyromancer'),
+    ('Way of the Deathbringer', 'Way of the Wildspeaker'),
+    ('Way of the Healer', 'Way of the Necromancer'),
+    ('Way of the Mind Sculptor', 'Way of the Paradox'),
+    ('Way of the Warlord', 'Way of the Mentor'),
+    ('Winter, Tormented Loner', 'Winter, Team Player'),
+    ('Yargle, Goliath of Otaria', 'Yargle, Glutton of Urborg'),
+    ('Yoshimaru, Scrappy Stray', 'Yoshimaru, Beloved Companion'),
+    ('Yuriko, Blade of the Mighty', 'Yuriko, Hope from the Shadows'),
+]
+EP = {"EPU": 91, "EPR": 7.5, "EPM": 1.6}
+
+SETS["FRA"] = dict(
+    # Paper: "Commons (5-6) ... In 1 of 55 Play Boosters, 1 of 10 Special Guests cards will replace a common",
+    # "Uncommon", "Common (23%) or uncommon (74%)", "Echoed pairs cards (3): 66 uncommon (88.9%), 14 rare
+    # (6.7%), 6 mythic rare (1.4%) ... Must include 2 cards from same echoed pair", "Rare (74.4%+) or mythic
+    # rare (14.8%+)", a traditional foil of any rarity, and the land: default or tower basic (45.5%) or
+    # "common dual land" (54.5%).
+    # Arena (17Lands, 31k P1P1 packs): the foil slot is a non-foil card of any rarity, and the rates below are
+    # measured. Every pack has 6 commons (a Special Guest in about 1 in 58), 1 uncommon, the common/uncommon
+    # slot, an echoed pair plus one more echoed card, 1 rare or mythic and the land; the any-rarity slot is a
+    # common (48.7%), uncommon (16.9%), echoed card (27.1%) or rare/mythic (6.7%).
+    sheets={**main("fra", 194),
+            "C": q("e:fra r:c cn<=194 -t:basic", minus=["L"]),
+            "L": q(cns("fra", [175, 177, 178, 182, 183, 184, 190, 192, 193, 194])), "B": basics("fra"),
+            "EPU": q("e:fra cn>=195 cn<=280 r:u"), "EPR": q("e:fra cn>=195 cn<=280 r:r"),
+            "EPM": q("e:fra cn>=195 cn<=280 r:m"),
+            "SPG": q("e:spg cn>=159 cn<=168")},
+    layouts=[dict(w=1, slots=[
+        dict(n=5, w={"C": 1}, balance=True), dict(n=1, w={"C": 57, "SPG": 1}, balance=True),
+        dict(n=1, w={"U": 1}),
+        dict(n=1, w={"C": 23.5, "U": 76.5}, dedupe=True),
+        dict(n=1, w=EP, pair=True),  # two cards: one and its partner
+        dict(n=1, w=EP, dedupe=True),
+        dict(n=1, w={"R": 83.7, "M": 16.3}),
+        dict(n=1, w={"C": 48.7, "U": 16.9, "R": 5.6, "M": 1.1,
+                     **{k: 27.1 * v / sum(EP.values()) for k, v in EP.items()}}, dedupe=True),
+        dict(n=1, w={"L": 54.7, "B": 45.3}),
+    ])],
+    pairs=FRA_PAIRS,
+    balance={"sheet": "C", "cover": True, "cap": 2},
+    sources=[COLLECTING + "reality-fracture", DROP_RATES],
+    notes=["All slot rates are measured on Arena from 17Lands packs (the paper foil slot is a non-foil card of "
+           "any rarity, a quarter of the time an echoed card)."],
+)

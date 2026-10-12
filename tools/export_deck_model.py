@@ -40,8 +40,8 @@ from openlane.games import game_path  # noqa: E402
 from openlane.synergy import DeckFM, _train  # noqa: E402
 
 SITE = Path(__file__).resolve().parents[1]
-SETS = ["BLB", "DFT", "DSK", "ECL", "EOE", "FDN", "FIN", "LCI", "MKM", "MOM", "MSH", "OTJ", "SOS", "TDM", "TLA",
-        "TMT", "WOE"]
+SETS = ["BLB", "DFT", "DSK", "ECL", "EOE", "FDN", "FIN", "HOB", "LCI", "MKM", "MOM", "MSH", "OTJ", "SOS", "TDM",
+        "TLA", "TMT", "WOE"]  # FRA: no 17Lands game data yet
 K, LR_DROPS = 4, 2
 # Penalties on card power and pairs: round 4's validation chose (1e-5, 1e-3) for fm4 nonland on all 12 sets (Premier
 # Draft, from a smaller grid). Sealed has ~7x fewer games, so each event picks its own on validation games.

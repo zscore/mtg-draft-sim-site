@@ -135,15 +135,18 @@ def resolve_collation(code, cards, cache):
         w = {k: v * len(sheets[k]) if isinstance(sl["w"], per_card) else v for k, v in sl["w"].items() if v > 0}
         tot = sum(w.values())
         out = {"n": sl["n"], "w": [[k, round(v / tot, 6)] for k, v in w.items()]}
-        for k in ("balance", "dedupe"):
+        for k in ("balance", "dedupe", "pair"):
             if sl.get(k):
                 out[k] = True
         return out
 
     layouts = [{"w": lay["w"], "slots": [slot(sl) for sl in lay["slots"] + spec.get("common", [])]}
                for lay in spec["layouts"]]
-    return ({"sheets": sheets, "layouts": layouts, "balance": spec["balance"], "unique": spec.get("unique", False)},
-            images)
+    out = {"sheets": sheets, "layouts": layouts, "balance": spec["balance"], "unique": spec.get("unique", False)}
+    if spec.get("pairs"):  # card id -> its partner, both ways, for "pair" slots
+        ids = [(by_name[norm(a)], by_name[norm(b)]) for a, b in spec["pairs"]]
+        out["pairs"] = {**{a: b for a, b in ids}, **{b: a for a, b in ids}}
+    return out, images
 
 
 def main():

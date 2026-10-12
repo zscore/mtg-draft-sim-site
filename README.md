@@ -58,8 +58,9 @@ retrained per set by tools/export_deck_model.py and run in deck.js.
 
 x is the deck's card counts with basics, w card power, v rank-4 pair vectors between nonland cards
 (synergy), F the deck features (land count, curve, colours and splash, coloured-source shortfall) and
-aff the deck's mean pairwise affinity from the set's PickNet `pool` model (sets without one, MOM, TMT
-and WOE, go without). It is fit on 17Lands game results with play/draw, mulligans, ranks, skill and
+aff the deck's mean pairwise affinity from the set's PickNet `pool` model (sets without one, HOB, MOM,
+TMT and WOE, go without). Reality Fracture (FRA) has no 17Lands game data yet, so no deck model: its
+pools get the PickNet build only. It is fit on 17Lands game results with play/draw, mulligans, ranks, skill and
 record as covariates, so card values are skill-adjusted. Draft pools use a model fit on Premier Draft
 games, sealed pools one fit on Sealed games. Each picks its penalties on validation games (the first
 70% of events train, the next 15% validate).
@@ -105,6 +106,7 @@ News, ...) shows the printing its sheet's Scryfall query matched; main-set cards
 Rebuilding:
 
     python tools/export_model.py [checkpoint.pt]   # model/picknet.onnx, checked against PyTorch (needs torch, onnx, onnxscript, onnxruntime)
+                                                   # the site runs ../picknet's frahob_freeze.pt: all_d256_ep3 with FRA and HOB fitted in
     python tools/build_data.py [SET ...]           # data/*.json (cards, Scryfall images, collation, context presets, mana facts)
     python tools/mana_facts.py [SET ...]           # just the mana facts in data/*.json, from ../mtg-data's Scryfall oracle dump
     python tools/export_deck_model.py [SET ...]    # data/deck/*.json, deck models (mtg-open-lane's .venv; ~2 min/set)

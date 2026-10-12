@@ -83,5 +83,15 @@
   "code": "WOE",
   "name": "Wilds of Eldraine",
   "n_picks": 14
+ },
+ {
+  "code": "FRA",
+  "name": "Reality Fracture",
+  "n_picks": 14
+ },
+ {
+  "code": "HOB",
+  "name": "The Hobbit",
+  "n_picks": 14
  }
 ]
