@@ -6,6 +6,14 @@ with onnxruntime-web. Packs are opened by packs.js from each set's MTG Arena col
 
     python3 serve.py            # http://localhost:8000 (COOP/COEP headers enable WASM threads)
 
+The Drafter profile picks the context vector PickNet is conditioned on: "typical" is the mean context
+of every 17Lands drafter in the set's test split, "strong" the mean over drafters with a 62%+ win rate
+(all drafters if a set has 100 or fewer of those). It is one model either way, asked to pick as that
+average drafter would, not a separate model trained on strong players. The profile applies to
+everything PickNet does: the bots, your seat's "Show PickNet's view" ranks and percentages (your slice
+of the same 8-seat run), the PickNet-pick and autodraft buttons, the pick log's comparison, and sealed
+ratings. Changing it mid-draft takes effect from the next pick; the pack on screen keeps its numbers.
+
 Sealed mode opens six packs and has PickNet rate the pool: each card's first-pick logit, read against
 an anchor card shared by every pack the pool is split into (draft.js rateCards). Auto-build takes the
 two colours with the best top 23 by that rating, plus 17 basics.
