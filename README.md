@@ -24,6 +24,33 @@ the two colours with the best top 23 by that rating, as many of their best spell
 count leaves room for, and the mana base below. A utility land goes in for a basic when PickNet rates it
 at least as high as the deck's weakest spell.
 
+## Live: drafting in MTG Arena
+
+Served by serve.py, the page gets a Live tab that follows your Arena draft as you make it. It reads Arena's log
+(turn on Options → Account → Detailed Logs (Plugin Support) in Arena, then restart it) and names Arena's card ids
+from Arena's own card database. The log is only served to this machine. On GitHub Pages there is no log
+to read, so the tab stays hidden. For the pack in hand it shows:
+- PickNet's pick for you: its rank and probability for each card, given your whole draft so far.
+- Wheel odds: the chance a card comes back 8 picks later if you pass it (draft.js WheelSim). The pack goes
+  round the other seven seats 48 times. Each seat is a stand-in drafter: a seat from a few simulated tables of
+  PickNet drafting against itself, kept a few picks ahead of yours, picking the way a human would (sampled).
+  The odds assume you take PickNet's top card, or its second when the card is the top one.
+- Each card's first-pick rank in the set (rateCards over the whole set).
+
+Below the pack are your picks, what the other seats took from a pack since you last saw it, and PickNet's
+choice next to each of your picks. Clicking a pick in that table brings its pack back up, with PickNet's numbers,
+the wheel odds and the card you took outlined. ◀ / ▶ (or the arrow keys) step through the draft.
+
+The Draft menu lists your older drafts too. Arena keeps a log per session for a few weeks (UTC_Log - *.log in
+MTGA_Data/Logs/Logs, next to its card database), and serve.py reads those as well, keeping only the draft
+messages (about 1 MB from a few weeks of logs). If Arena restarted mid-draft, the draft is put back together
+from both sessions, and the pool Arena lists at each login is matched to the draft it came from. The deck builder opens on your pool when the draft ends, or on request
+before then. An event you're still playing that Arena lists at login (a draft whose picks aren't in the log,
+or sealed) shows its pool for building. arena.js parses the log: Premier and Traditional Draft
+(Draft.Notify, EventPlayerDraftMakePick, LogBusinessEvents), Quick Draft (BotDraftDraftStatus/Pick), and
+event pools (CardPool). In Quick Draft the other seats are Arena's bots, not the humans PickNet learned
+from, so the wheel odds are rougher there.
+
 ## Mana base
 
 Both builds get their lands from the same rules (deck.js manaBase), working from the spells alone:

@@ -12,9 +12,10 @@
     <div id="mode" class="tabs" role="tablist">
       <button data-mode="draft" class="on">Draft</button>
       <button data-mode="sealed">Sealed</button>
+      <button data-mode="live" id="live-tab" hidden title="Follow your MTG Arena draft from Arena's log (this page served by serve.py)">Live</button>
     </div>
     <div class="controls">
-      <label>Set <select id="set"></select></label>
+      <label class="no-live">Set <select id="set"></select></label>
       <label class="draft-only">Bots
         <select id="style">
           <option value="0">Greedy (top pick)</option>
@@ -27,10 +28,10 @@
           <option value="strong">Strong (62%+ win rate)</option>
         </select>
       </label>
-      <label title="The same seed opens the same packs: a sealed pool, or a draft's packs and bot picks (given the same picks from you). Leave it empty for a random one.">Seed
+      <label class="no-live" title="The same seed opens the same packs: a sealed pool, or a draft's packs and bot picks (given the same picks from you). Leave it empty for a random one.">Seed
         <input id="seed" type="text" placeholder="random" size="8" spellcheck="false" autocomplete="off">
       </label>
-      <button id="seed-used" class="ghost" hidden title="The seed of the draft or pool on screen. Click to put it in the seed box, to replay it or share it."></button>
+      <button id="seed-used" class="ghost no-live" hidden title="The seed of the draft or pool on screen. Click to put it in the seed box, to replay it or share it."></button>
       <button id="new" class="draft-only" disabled>New draft</button>
       <button id="seal-open" class="sealed-only" disabled>Open sealed pool</button>
       <button id="undo" class="ghost draft-only" disabled title="Undo your last pick (⌘Z / Ctrl+Z)">Undo pick</button>
@@ -94,6 +95,46 @@
     </section>
 
     <section id="sealed-view" hidden></section>
+
+    <section id="live-view" hidden>
+      <div class="bar">
+        <h2 id="live-title">Live draft</h2>
+        <label>Draft <select id="live-which" title="Your drafts from Arena's logs (Arena keeps a few weeks of them). Latest follows the draft you're in."></select></label>
+        <p id="live-note"></p>
+      </div>
+      <div id="live-pick" hidden>
+        <div class="bar" id="live-review" hidden>
+          <h2 id="live-review-title"></h2>
+          <button id="live-prev" class="ghost" title="The pick before (←)">◀ Previous pick</button>
+          <button id="live-next" class="ghost" title="The pick after (→)">Next pick ▶</button>
+          <button id="live-close" class="ghost" title="Back to the picks (Esc)">Close</button>
+        </div>
+        <p class="live-legend">On each card: PickNet's pick for you (rank and probability), the chance the card comes back
+          8 picks later, and its rank in the set as a first pick. Wheel odds send the pack round the other seven seats many
+          times with PickNet drafting for them.</p>
+        <div id="live-pack" class="pack show-model live"></div>
+        <div id="live-taken" hidden>
+          <div class="bar"><h2>Taken from this pack since you last saw it</h2></div>
+          <div class="pool mini-pool"></div>
+        </div>
+      </div>
+      <div id="live-pool-view" hidden>
+        <div class="bar">
+          <h2 id="live-pool-title">Your picks</h2>
+          <span id="live-pool-colors" class="chips"></span>
+          <button id="live-build-btn" class="ghost" title="Open the deck builder on your picks so far">Build a deck from these</button>
+        </div>
+        <div id="live-pool" class="pool"></div>
+      </div>
+      <div id="live-build" hidden>
+        <div class="bar"><h2>Build a deck</h2><p>The deck model searches your picks for its best 40-card deck.</p></div>
+        <div id="live-build-holder"></div>
+      </div>
+      <div id="live-log-view" hidden>
+        <div class="bar"><h2>Your picks vs PickNet</h2><p>Click a pick to see its pack again, with PickNet's numbers and wheel odds.</p></div>
+        <table id="live-log"></table>
+      </div>
+    </section>
 
     <p id="seal-intro" class="intro" hidden>Sealed: open six packs of the chosen set and build a 40-card deck. PickNet
       rates every card in the pool (how much a drafter would want it as a first pick), and the deck model, fit on 17Lands Sealed

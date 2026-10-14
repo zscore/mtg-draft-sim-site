@@ -1,5 +1,6 @@
-import { Draft, feeds, choices, sample, rateCards, SEATS, SLOTS } from './draft.js';
+import { Draft, Seat, WheelSim, feeds, choices, sample, rateCards, SEATS, SLOTS } from './draft.js';
 import { newSeed, openPack, seededRng } from './packs.js';
+import { ArenaDrafts, eventSet, isBotDraft, isSealed, mergeDrafts, parseEntry, placeSteps } from './arena.js';
 import { DeckModel, buildDeck, cardValues, deckPerColors, isLand, landCount, manaBase, utilityLands, BASICS } from './deck.js';
 
 const $ = (s) => document.querySelector(s);
@@ -898,6 +899,427 @@ async function showDraftBuild(seatIdx) {
   renderBuilder(b);
 }
 
+// ---------------------------------------------------------------- live (MTG Arena)
+
+// The Live tab follows your draft in MTG Arena. serve.py reads Arena's log (arena.js turns it into drafts) and its
+// card database (grpId -> name; names match the set's cards). For the pack in hand it shows PickNet's pick for you,
+// wheel odds (draft.js WheelSim) and each card's first-pick rank in the set; then your picks, PickNet's view of each
+// pick, and the deck builder on your pool. Older drafts come from Arena's session logs, and any pick, old or new, can
+// be looked at again (live.focus: its slot). The tab only appears when serve.py serves the page.
+const live = { drafts: new ArenaDrafts(), files: {}, names: new Map(), codes: [], ranks: new Map(), gen: 0, view: null,
+  history: [], merged: new Map(), which: 'latest', focus: null };
+const POLL_MS = 1000;
+const normName = (n) => n.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const pct = (p) => `${(p * 100).toFixed(p < 0.1 ? 1 : 0)}%`;
+const EVENT_KINDS = [[/Premier/i, 'Premier Draft'], [/Quick/i, 'Quick Draft'], [/Trad/i, 'Traditional Draft'],
+  [/Sealed/i, 'Sealed'], [/Draft/i, 'Draft']];
+const eventKind = (event) => EVENT_KINDS.find(([re]) => re.test(event || ''))?.[1] ?? event ?? 'Draft';
+
+async function api(path) {
+  const r = await fetch(`api/arena/${path}`);
+  if (!r.ok) throw new Error(`${path}: HTTP ${r.status}`);
+  return r.json();
+}
+
+// One log file's new entries -> events into live.drafts; true if there were any. The last entry comes again each
+// time (it may still be growing), so entries already read are skipped by their offset.
+async function readLog(file) {
+  const f = live.files[file] ??= { id: '', from: 0, seen: new Set() };
+  const r = await api(`log?file=${file}&from=${f.from}&id=${encodeURIComponent(f.id)}`);
+  if (r.reset) f.seen.clear();
+  Object.assign(f, { id: r.id, from: r.next });
+  let changed = false;
+  for (const e of r.entries) {
+    if (f.seen.has(e.at)) continue;
+    const evs = parseEntry(e.text);
+    if (evs === null) continue; // not all written yet
+    f.seen.add(e.at);
+    for (const ev of evs) { live.drafts.add(ev); changed = true; }
+  }
+  return changed;
+}
+
+// Every draft in Arena's session logs, read once. Each log gets its own tracker: drafts don't carry over between
+// sessions, except one Arena restarted in the middle of, which mergeDrafts puts back together.
+async function loadHistory() {
+  for (const f of await api('history')) {
+    const r = await api(`log?file=${encodeURIComponent(f.name)}&from=0&id=`), a = new ArenaDrafts();
+    for (const e of r.entries) for (const ev of parseEntry(e.text) || []) a.add(ev);
+    for (const d of a.drafts) live.history.push(Object.assign(d, { source: f.name }));
+  }
+}
+
+// Old logs and this session's as one list of drafts, oldest first.
+const allDrafts = () => mergeDrafts([...live.history, ...live.drafts.drafts], live.merged);
+
+// Read the previous session's log once (a draft may have started there), then follow the current one.
+async function pollLive() {
+  clearTimeout(live.timer);
+  if (live.polling || mode !== 'live') return;
+  live.polling = true;
+  try {
+    if (!live.started) {
+      live.started = true;
+      await readLog('prev').catch(() => { /* no previous log */ });
+      loadHistory().then(showLive, (e) => status(`Couldn't read Arena's older logs: ${e.message}`));
+    }
+    if ((await readLog('cur')) || !live.view) showLive();
+    live.error = null;
+  } catch (e) {
+    if (!live.error) liveNote(`Can't read Arena's log: ${e.message}`, true);
+    live.error = e;
+  } finally {
+    live.polling = false;
+  }
+  if (mode === 'live') live.timer = setTimeout(pollLive, POLL_MS);
+}
+
+function liveNote(text, warn = false) {
+  $('#live-note').textContent = text;
+  $('#live-note').classList.toggle('warn', warn);
+}
+
+// Names for the draft's grpIds not looked up yet (null: not in Arena's card database).
+async function nameCards(d) {
+  const all = [...d.steps.flatMap((s) => [...s.cards, s.taken]), ...(d.picked || []), ...(d.pool || [])];
+  const need = [...new Set(all)].filter((g) => g !== null && !live.names.has(g));
+  for (let i = 0; i < need.length; i += 200) {
+    const chunk = need.slice(i, i + 200), got = await api(`cards?ids=${chunk.join(',')}`);
+    for (const g of chunk) live.names.set(g, got[g] ?? null);
+  }
+}
+
+// The draft's set: from its event name, or else the set most of its cards come from.
+function draftSetCode(d) {
+  const code = eventSet(d.event, live.codes);
+  if (code) return code;
+  const n = {};
+  for (const s of d.steps) for (const g of s.cards) { const c = live.names.get(g); if (c && live.codes.includes(c.set)) n[c.set] = (n[c.set] || 0) + 1; }
+  return Object.entries(n).sort((a, b) => b[1] - a[1])[0]?.[0];
+}
+
+// The draft as PickNet sees it: your seat (every pack shown and pick made, in slots), the pack in hand, your pool.
+function liveState(d, s) {
+  const byName = s.byName ??= (() => {
+    const m = new Map();
+    for (const [id, c] of Object.entries(s.cards)) {
+      for (const n of [c.name, c.name.split(' // ')[0]]) if (!m.has(normName(n))) m.set(normName(n), +id);
+    }
+    return m;
+  })();
+  const toId = (g) => { const c = live.names.get(g); return c ? byName.get(normName(c.name)) : undefined; };
+  const known = (gs) => gs.map(toId).filter((x) => x !== undefined);
+  d.ui ??= { choices: new Map(), wheel: new Map() };
+  const placed = placeSteps(d, s.n_picks), seat = new Seat(s.pad);
+  for (const p of placed) {
+    seat.show(p.t, known(p.step.cards));
+    const c = p.step.taken === null ? undefined : toId(p.step.taken);
+    if (c !== undefined) seat.take(p.t, c);
+  }
+  const last = placed[placed.length - 1];
+  const finished = d.done || (!!last && last.round === 2 && last.k === s.n_picks - 1 && last.step.taken !== null);
+  const cur = !finished && last && last.step.taken === null && seat.tokens(last.t).length ? last : null;
+  // the event's own list of your cards once it has one (a draft whose start the log missed, or sealed), else your picks
+  const listed = d.pool ?? (d.picked && d.picked.length > seat.pool.length ? d.picked : null);
+  // the pack on screen: the one in hand, or else a pick you're looking at again
+  const shown = cur ?? (live.focus?.key === d.key ? placed.find((p) => p.t === live.focus.t) : null) ?? null;
+  return { d, s, placed, seat, cur, shown, finished, toId, pool: listed ? known(listed) : seat.pool.slice() };
+}
+
+// "Tue, Oct 13, 08:35 PM" (your time) from a session log's name ("UTC_Log - 10-13-2026 18.35.07.log", in UTC), or "today".
+function draftDate(d) {
+  const m = /(\d+)-(\d+)-(\d+) (\d+)\.(\d+)/.exec(d.source || '');
+  if (!m) return 'today';
+  return new Date(Date.UTC(+m[3], m[1] - 1, +m[2], +m[4], +m[5])).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+function draftLabel(d) {
+  const picks = d.steps.filter((s) => s.taken !== null).length, code = eventSet(d.event, live.codes);
+  return `${code ? `${code} ` : ''}${eventKind(d.event)} · ${draftDate(d)} · ${d.steps.length ? `${picks} pick${picks === 1 ? '' : 's'}` : 'pool'}`;
+}
+
+function renderPicker(list) {
+  const sel = $('#live-which'), opts = [['latest', list.length ? `Latest: ${draftLabel(list[list.length - 1])}` : 'Latest'],
+    ...[...list].reverse().map((d) => [d.key, draftLabel(d)])];
+  const sig = opts.map((o) => o.join('|')).join('\n');
+  if (sel.dataset.sig !== sig) {
+    sel.dataset.sig = sig;
+    sel.replaceChildren(...opts.map(([v, t]) => new Option(t, v)));
+  }
+  if (!list.some((d) => d.key === live.which)) live.which = 'latest';
+  sel.value = live.which;
+}
+
+async function showLive() {
+  const gen = ++live.gen, stale = () => gen !== live.gen || mode !== 'live';
+  const list = allDrafts();
+  renderPicker(list);
+  const d = list.find((x) => x.key === live.which) ?? list[list.length - 1];
+  if (live.focus && live.focus.key !== d?.key) live.focus = null;
+  if (!d) {
+    live.view = null;
+    $('#live-title').textContent = 'Live draft';
+    for (const id of ['#live-pick', '#live-pool-view', '#live-build', '#live-log-view']) $(id).hidden = true;
+    const st = live.status || {};
+    liveNote(!st.log ? 'No MTG Arena log found. Is Arena installed? (Set MTGA_LOG_DIR for serve.py if it lives somewhere unusual.)'
+      : st.detailed === false ? 'Arena\'s detailed logs are off: turn on Options → Account → Detailed Logs (Plugin Support), then restart Arena.'
+        : 'Watching Arena\'s log. Start a draft in Arena and it shows up here.', !st.log || st.detailed === false);
+    return;
+  }
+  try {
+    await nameCards(d);
+  } catch (e) {
+    return liveNote(`Can't read Arena's card database: ${e.message}`, true);
+  }
+  if (stale()) return;
+  const code = draftSetCode(d);
+  if (!code) {
+    $('#live-title').textContent = `${eventKind(d.event)}${d.event ? ` (${d.event})` : ''}`;
+    for (const id of ['#live-pick', '#live-pool-view', '#live-build', '#live-log-view']) $(id).hidden = true;
+    return liveNote(live.status?.cardDb ? 'PickNet has no data for this set.' :
+      'Arena\'s card database wasn\'t found, so the cards can\'t be named. (Set MTGA_CARD_DB for serve.py.)', true);
+  }
+  const s = await loadSet(code);
+  if (stale()) return;
+  const v = live.view = liveState(d, s);
+  renderLive(v);
+  await ready;
+  if (stale()) return;
+  if (v.shown) {
+    await liveChoices(v, v.shown.t);
+    if (stale()) return;
+    renderLivePack(v);
+    startWheel(v);
+  }
+  await setRanks(s);
+  if (stale()) return;
+  renderLivePack(v);
+  for (const p of v.placed) {
+    if (p.step.taken === null) continue;
+    await liveChoices(v, p.t);
+    if (stale()) return;
+  }
+  renderLiveLog(v);
+  if (v.finished && v.pool.length && !d.ui.build) liveBuild(v, false);
+}
+
+const choiceKey = (t) => `${t}:${$('#skill').value}`;
+
+// PickNet's read of your pack at slot t, cached per draft.
+async function liveChoices(v, t) {
+  const { d, s, seat } = v, key = choiceKey(t);
+  if (!d.ui.choices.has(key) && seat.tokens(t).length) {
+    const r = await run(feeds([seat], t, [s.ctx[$('#skill').value]], s.sid));
+    d.ui.choices.set(key, choices(seat, t, r.logits, 0));
+  }
+  return d.ui.choices.get(key);
+}
+
+// Every card's first-pick rank in its set (PickNet, no context), once per set and drafter profile.
+async function setRanks(s) {
+  const key = `${s.code}:${$('#skill').value}`;
+  if (!live.ranks.has(key)) {
+    const ids = Object.keys(s.cards).map(Number).filter(notBasic(s));
+    const r = await rateCards(s, ids, s.ctx[$('#skill').value], (f) => run(f).then((x) => x.logits), 4, seededRng(`${s.code}:ranks`));
+    live.ranks.set(key, new Map([...r].sort((a, b) => b[1] - a[1]).map(([c], i) => [c, i + 1])));
+  }
+  return live.ranks.get(key);
+}
+
+// Wheel odds for the pack in hand, in the background; one simulation at a time per draft (they share its tables).
+function startWheel(v) {
+  const { d, s, shown: cur, seat } = v, step = cur.step;
+  const ch = d.ui.choices.get(choiceKey(cur.t));
+  if (cur.k + SEATS >= s.n_picks || d.ui.wheel.has(cur.t) || d.ui.wheelFor === step || !ch) return;
+  d.ui.wheelFor = step;
+  d.ui.sim ??= new WheelSim(s, (f) => run(f).then((r) => r.logits));
+  const sim = d.ui.sim, cancelled = () => live.view?.shown?.step !== step;
+  // your picks: the one you made, if this is one you've made; PickNet's top two otherwise
+  const took = step.taken === null ? undefined : v.toId(step.taken);
+  const mine = took === undefined ? ch.slice(0, 2).map((x) => x.card) : [took, ch.find((x) => x.card !== took)?.card ?? took];
+  let done = 0, total = 0;
+  const t0 = performance.now();
+  d.ui.simQueue = (d.ui.simQueue ?? Promise.resolve()).then(() => {
+    if (cancelled()) return null;
+    total = Math.max(0, cur.t + SEATS - 1 - sim.t) + SEATS - 1;
+    return sim.odds(seat.seen[cur.t], cur.t, mine, cancelled, () => {
+      if (!cancelled() && mode === 'live') status(`Wheel odds: sending the pack round the table… ${++done} / ${total}`);
+    });
+  }).then((odds) => {
+    if (!odds) return;
+    d.ui.wheel.set(cur.t, odds);
+    if (cancelled()) return;
+    status(`Wheel odds: ${sim.rollouts} passes round the table in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+    renderLivePack(live.view);
+  }).catch((e) => status(`Wheel odds failed: ${e.message}`)).finally(() => {
+    if (d.ui.wheelFor === step) d.ui.wheelFor = null;
+  });
+}
+
+function renderLive(v) {
+  const { d, s, cur, shown, finished } = v;
+  set = s;
+  $('#live-title').textContent = `${s.name} ${eventKind(d.event)}` + (cur ? ` · Pack ${cur.round + 1} · Pick ${cur.k + 1} of ${s.n_picks}`
+    : finished || !d.steps.length || d !== allDrafts().at(-1) ? '' : ' · waiting for the next pack');
+  const review = shown && !cur;
+  $('#live-review').hidden = !review;
+  if (review) {
+    const took = shown.step.taken === null ? undefined : v.toId(shown.step.taken);
+    $('#live-review-title').textContent = `Pack ${shown.round + 1} · Pick ${shown.k + 1}` +
+      (took === undefined ? '' : `: you took ${s.cards[took].name}`);
+    const at = v.placed.indexOf(shown);
+    $('#live-prev').disabled = at <= 0;
+    $('#live-next').disabled = at >= v.placed.length - 1;
+  }
+  const unknown = cur ? cur.step.cards.filter((g) => v.toId(g) === undefined).length : 0;
+  liveNote([
+    finished ? (d.steps.length ? (d.steps.length < 3 * s.n_picks ? 'Draft complete (the log missed some of it).' : 'Draft complete.') : `Your ${isSealed(d.event) ? 'sealed pool' : 'draft pool'} from Arena.`) : '',
+    isBotDraft(d.event) ? 'The other seats here are Arena\'s bots, not people, so PickNet\'s wheel odds are rougher.' : '',
+    unknown ? `${unknown} card${unknown > 1 ? 's' : ''} in this pack ${unknown > 1 ? 'aren\'t' : 'isn\'t'} in PickNet's card list.` : '',
+  ].filter(Boolean).join(' '));
+  $('#live-pick').hidden = !shown;
+  renderLivePack(v);
+  renderLivePool(v);
+  renderLiveLog(v);
+  const b = d.ui.build;
+  $('#live-build').hidden = !b;
+  if (b && $('#live-build-holder').firstChild !== b.b.root) $('#live-build-holder').replaceChildren(b.b.root);
+  if (b) renderBuilder(b.b);
+}
+
+// The pack in hand: built once per pack (so images don't reload), then PickNet's numbers filled in as they arrive.
+function renderLivePack(v) {
+  const { d, s, shown: cur, seat } = v;
+  if (!cur || mode !== 'live' || live.view !== v) return;
+  set = s;
+  const pack = $('#live-pack');
+  if (live.packStep !== cur.step) {
+    live.packStep = cur.step;
+    live.packEls = new Map();
+    const els = seat.tokens(cur.t).map((tok) => {
+      const el = cardEl(tok.card);
+      if (tok.copies > 1) {
+        const b = document.createElement('span');
+        b.className = 'copies';
+        b.textContent = `×${tok.copies}`;
+        el.append(b);
+      }
+      const o = document.createElement('div');
+      o.className = 'model';
+      el.append(o);
+      live.packEls.set(tok.card, el);
+      return el;
+    });
+    const unknown = cur.step.cards.filter((g) => v.toId(g) === undefined).map((g) => {
+      const el = document.createElement('div');
+      el.className = 'card noimg unknown';
+      const name = live.names.get(g)?.name ?? `Arena card ${g}`;
+      el.innerHTML = '<div class="name"></div><div class="model">Not in PickNet\'s card list</div>';
+      el.querySelector('.name').textContent = name;
+      el.title = name;
+      return el;
+    });
+    pack.replaceChildren(...els, ...unknown);
+    renderTaken(v);
+  }
+  const ch = d.ui.choices.get(choiceKey(cur.t)) ?? [], odds = d.ui.wheel.get(cur.t);
+  const ranks = live.ranks.get(`${s.code}:${$('#skill').value}`), nRanked = ranks?.size;
+  const wheels = cur.k + SEATS < s.n_picks, took = cur.step.taken === null ? undefined : v.toId(cur.step.taken);
+  const rankOf = new Map(ch.map((x, i) => [x.card, i]));
+  for (const [card, el] of live.packEls) {
+    const r = rankOf.get(card), o = el.querySelector('.model'), name = s.cards[card].name;
+    el.classList.toggle('top1', r === 0);
+    el.classList.toggle('selected', card === took);
+    const w = odds?.get(card), sr = ranks?.get(card);
+    const wheel = !wheels ? '' : odds ? (w === null || w === undefined ? 'wheel ?' : `wheels ${pct(w)}`) : 'wheel …';
+    o.innerHTML = (r === undefined ? 'PickNet …' : `#${r + 1} · ${pct(ch[r].p)}<div class="meter"><i style="width:${(ch[r].p * 100).toFixed(1)}%"></i></div>`) +
+      `<div class="sub"><span class="wheel${w >= 0.5 ? ' likely' : ''}">${wheel}</span><span>${sr ? `set #${sr}` : ''}</span></div>`;
+    el.title = [card === took ? `${name} (you took it)` : name, r === undefined ? '' : `PickNet's #${r + 1} for you (${(ch[r].p * 100).toFixed(1)}%)`,
+      wheels && typeof w === 'number' ? `comes back ${(w * 100).toFixed(0)}% of the time if you pass it` : '',
+      sr ? `#${sr} of ${nRanked} in ${s.code} as a first pick` : ''].filter(Boolean).join(' · ');
+  }
+  for (const x of ch) pack.append(live.packEls.get(x.card)); // best first
+  for (const el of pack.querySelectorAll('.unknown')) pack.append(el);
+}
+
+// On a pack's second lap: what the other seven took from it since you saw it.
+function renderTaken(v) {
+  const { shown: cur, seat } = v, before = cur.k >= SEATS ? seat.seen[cur.t - SEATS] : null;
+  $('#live-taken').hidden = !before;
+  if (!before) return;
+  const gone = before.slice();
+  for (const c of [seat.pick[cur.t - SEATS], ...seat.seen[cur.t]]) { const i = gone.indexOf(c); if (i >= 0) gone.splice(i, 1); }
+  $('#live-taken .pool').replaceChildren(...pileCols(gone, true));
+}
+
+function renderLivePool(v) {
+  $('#live-pool-view').hidden = !v.pool.length;
+  if (!v.pool.length) return;
+  set = v.s;
+  $('#live-pool-title').textContent = `Your ${v.d.steps.length ? 'picks' : 'pool'} (${v.pool.length})`;
+  $('#live-pool-colors').replaceChildren(...colorChips(v.pool));
+  $('#live-pool').replaceChildren(...pileCols(v.pool));
+}
+
+function renderLiveLog(v) {
+  const { d, s, placed, toId } = v;
+  const rows = placed.filter((p) => p.step.taken !== null && toId(p.step.taken) !== undefined);
+  $('#live-log-view').hidden = !rows.length;
+  if (!rows.length) return;
+  const esc = (x) => x.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  let agree = 0, scored = 0;
+  const html = rows.map((p) => {
+    const card = toId(p.step.taken), ch = d.ui.choices.get(choiceKey(p.t));
+    const r = ch ? ch.findIndex((x) => x.card === card) : -1;
+    if (ch && r >= 0) { scored++; if (r === 0) agree++; }
+    const cells = [`P${p.round + 1}p${p.k + 1}`, esc(s.cards[card].name),
+      !ch ? '…' : r < 0 ? '—' : `#${r + 1} (${(ch[r].p * 100).toFixed(0)}%)`,
+      !ch ? '…' : r === 0 ? '—' : `${esc(s.cards[ch[0].card].name)} (${(ch[0].p * 100).toFixed(0)}%)`];
+    const cls = [r === 0 ? 'agree' : '', v.shown === p ? 'focus' : ''].join(' ').trim();
+    return `<tr data-t="${p.t}" class="${cls}">${cells.map((c) => `<td>${c}</td>`).join('')}</tr>`;
+  }).join('');
+  $('#live-log').innerHTML = `<caption>You took PickNet's top choice on ${agree} of ${scored} picks.</caption>` +
+    '<tr><th>Pick</th><th>You took</th><th>PickNet\'s rank</th><th>PickNet\'s top choice</th></tr>' + html;
+  for (const tr of $('#live-log').querySelectorAll('tr[data-t]')) tr.onclick = () => liveFocus(+tr.dataset.t, true);
+}
+
+// Look again at the pick in slot t of the draft on screen (null: back to the picks). The pack in hand, if there is
+// one, stays on screen until you've picked from it.
+function liveFocus(t, scroll = false) {
+  const v = live.view;
+  if (!v) return;
+  live.focus = t === null ? null : { key: v.d.key, t };
+  live.view = Object.assign({}, v, { shown: v.cur ?? (t === null ? null : v.placed.find((p) => p.t === t)) });
+  renderLive(live.view);
+  showLive();
+  if (scroll && live.view.shown) $('#live-view').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function liveStep(dir) {
+  const v = live.view;
+  if (!v?.shown || v.cur) return;
+  const p = v.placed[v.placed.indexOf(v.shown) + dir];
+  if (p) liveFocus(p.t);
+}
+
+// The deck builder on your pool, made again when the pool has changed since. scroll: bring it into view.
+async function liveBuild(v, scroll = true) {
+  const { d, s } = v, key = v.pool.join(',');
+  if (!v.pool.length) return;
+  $('#live-build').hidden = false;
+  if (d.ui.build?.key === key) {
+    $('#live-build-holder').replaceChildren(d.ui.build.b.root);
+    return renderBuilder(d.ui.build.b);
+  }
+  const root = document.createElement('div');
+  $('#live-build-holder').replaceChildren(root);
+  const b = await makeBuilder(s, v.pool, isSealed(d.event) ? 'sealed' : 'draft', root, `live:${d.draftId ?? d.event}:${v.pool.length}`);
+  d.ui.build = { key, b };
+  if (b.model) buildBest(b);
+  else b.ratingsReady.then(() => buildPickNet(b));
+  if (scroll) $('#live-build').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 // ---------------------------------------------------------------- modes
 
 const DRAFT_VIEWS = ['#pick-view', '#god-view', '#end-view', '#build-view', '#pool-view', '#log-view', '#intro'];
@@ -908,6 +1330,14 @@ function setMode(m) {
   document.body.dataset.mode = m;
   for (const b of $('#mode').children) b.classList.toggle('on', b.dataset.mode === m);
   showSeed();
+  $('#live-view').hidden = m !== 'live';
+  if (m === 'live') {
+    for (const v of DRAFT_VIEWS) $(v).hidden = true;
+    $('#sealed-view').hidden = $('#seal-intro').hidden = true;
+    if (live.view) renderLive(live.view);
+    pollLive();
+    return;
+  }
   if (m === 'sealed') {
     for (const v of DRAFT_VIEWS) $(v).hidden = true;
     $('#sealed-view').hidden = !sealed;
@@ -934,6 +1364,7 @@ async function init() {
   const FIRST = 'FRA';
   sets.sort((a, b) => (b.code === FIRST) - (a.code === FIRST) || a.name.localeCompare(b.name));
   $('#set').replaceChildren(...sets.map((s) => new Option(`${s.name} (${s.code})`, s.code)));
+  live.codes = sets.map((s) => s.code);
   for (const k of ['set', 'style', 'skill']) {
     const v = pref.get(k, null);
     if (v !== null && [...$(`#${k}`).options].some((o) => o.value === v)) $(`#${k}`).value = v;
@@ -951,11 +1382,30 @@ async function init() {
   $('#copy-deck').onclick = copyDeck;
   $('#seal-open').onclick = openSealed;
   for (const b of $('#mode').children) b.onclick = () => setMode(b.dataset.mode);
-  setMode(pref.get('mode', 'draft') === 'sealed' ? 'sealed' : 'draft');
+  const wanted = pref.get('mode', 'draft');
+  setMode(wanted === 'sealed' ? 'sealed' : 'draft');
+  // the Live tab, when serve.py is serving the page and can read Arena's log
+  api('status').then((st) => {
+    live.status = st;
+    $('#live-tab').hidden = false;
+    if (wanted === 'live') setMode('live');
+  }).catch(() => { /* a static host: no Live tab */ });
+  $('#skill').addEventListener('change', () => { if (mode === 'live') showLive(); });
+  $('#live-build-btn').onclick = () => live.view && liveBuild(live.view);
+  $('#live-which').onchange = () => { live.which = $('#live-which').value; live.focus = null; showLive(); };
+  $('#live-prev').onclick = () => liveStep(-1);
+  $('#live-next').onclick = () => liveStep(1);
+  $('#live-close').onclick = () => liveFocus(null);
   $('#export-csv').onclick = exportCsv;
   $('#export-jsonl').onclick = exportJsonl;
   document.addEventListener('keydown', (e) => {
-    if (e.target.closest('select, input, textarea') || mode !== 'draft') return;
+    if (e.target.closest('select, input, textarea')) return;
+    if (mode === 'live') {
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); liveStep(e.key === 'ArrowLeft' ? -1 : 1); }
+      else if (e.key === 'Escape') liveFocus(null);
+      return;
+    }
+    if (mode !== 'draft') return;
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
       e.preventDefault();
       undo();

@@ -39,11 +39,11 @@ export class Seat {
   }
 
   // The pack in hand at slot t (card ids, repeated per copy). From the 9th pick of a round the pack
-  // has come back around, so also record what the other seven took from it since we last saw it.
+  // has come back around, so also record what the other seven took from it since we last saw it (if we know).
   show(t, pack) {
     this.seen[t] = pack.slice();
     writeTokens(this.idx, this.cnt, t * P, P, counts(pack), this.pad);
-    if (t % SLOTS >= SEATS) {
+    if (t % SLOTS >= SEATS && this.seen[t - SEATS]) {
       const m = counts(this.seen[t - SEATS]);
       remove(m, this.pick[t - SEATS]);
       for (const c of pack) remove(m, c);
@@ -164,4 +164,71 @@ export async function rateCards(set, ids, ctx, run, reps = 4, rng = Math.random)
     for (const x of ch) out.set(x.card, out.get(x.card) + (x.logit - a) / reps);
   });
   return out;
+}
+
+// How likely each card of a live pack is to come back 8 picks later, by sending the pack round the other seven
+// seats many times over. Nobody knows the real table's drafts, so the other drafters are stand-ins: the seats of
+// a few simulated tables (PickNet drafting against itself from freshly opened packs, picks sampled like a human),
+// kept a few slots ahead of the live draft so there is a drafter with a history at every slot the pack visits.
+// Each pass round the table draws a stand-in at random for each seat. A card's odds assume you take PickNet's
+// first choice, or its second when the card is the first choice. run(feeds) -> logits.
+export class WheelSim {
+  constructor(set, run, { tables = 3, rollouts = 48, temperature = 1, ctx = set.ctx.typical, rng = Math.random } = {}) {
+    Object.assign(this, { set, run, rollouts, temperature, ctx, rng });
+    this.tables = Array.from({ length: tables }, () => new Draft(set, rng));
+  }
+
+  get t() { return this.tables[0].t; }
+
+  // Play the simulated tables on to slot t (or the end of the draft). onStep(t) after each slot.
+  async advanceTo(t, cancelled = () => false, onStep = null) {
+    while (!this.tables[0].done && this.t < t) {
+      if (cancelled()) return false;
+      const seats = this.tables.flatMap((d) => d.seats), at = this.t;
+      const logits = await this.run(feeds(seats, at, seats.map(() => this.ctx), this.set.sid));
+      this.tables.forEach((d, i) => d.apply(d.seats.map((s, j) =>
+        sample(choices(s, at, logits, i * SEATS + j), this.temperature, this.rng).card)));
+      onStep?.(this.t);
+    }
+    return true;
+  }
+
+  // pack: the card ids in your hand at slot t (repeated per copy); mine: your likely picks, best first.
+  // -> Map card -> P(at least one copy comes back), or null if cancelled or the pack won't come back this round.
+  async odds(pack, t, mine, cancelled = () => false, onStep = null) {
+    const k = t % SLOTS;
+    if (k + SEATS >= this.set.n_picks) return null;
+    if (!(await this.advanceTo(t + SEATS - 1, cancelled, onStep))) return null;
+    const R = this.rollouts, takes = Array.from({ length: R }, (_, r) => mine[r % Math.min(2, mine.length)]);
+    const hands = takes.map((c) => { const h = pack.slice(); h.splice(h.indexOf(c), 1); return h; });
+    const pool = this.tables.flatMap((d) => d.seats);
+    for (let j = 1; j < SEATS; j++) {
+      if (cancelled()) return null;
+      const at = t + j;
+      const seats = hands.map((h) => {
+        const src = pool[Math.floor(this.rng() * pool.length)];
+        const s = Object.assign(new Seat(this.set.pad), {
+          idx: src.idx.slice(), cnt: src.cnt.slice(), pick: src.pick.slice(), oidx: src.oidx.slice(),
+          ocnt: src.ocnt.slice(), seen: src.seen.slice(),
+        });
+        // on its second lap the pack is one this seat saw before; what it held then is close to what you saw
+        if (at % SLOTS >= SEATS) s.seen[at - SEATS] = pack;
+        s.show(at, h);
+        return s;
+      });
+      const logits = await this.run(feeds(seats, at, seats.map(() => this.ctx), this.set.sid));
+      seats.forEach((s, b) => {
+        const c = sample(choices(s, at, logits, b), this.temperature, this.rng).card, h = hands[b];
+        h.splice(h.indexOf(c), 1);
+      });
+      onStep?.(at);
+    }
+    const out = new Map();
+    for (const c of new Set(pack)) {
+      let n = 0, back = 0;
+      hands.forEach((h, r) => { if (takes[r] !== c) { n++; if (h.includes(c)) back++; } });
+      out.set(c, n ? back / n : null);
+    }
+    return out;
+  }
 }

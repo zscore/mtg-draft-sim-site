@@ -148,3 +148,20 @@ footer a { color: inherit; }
 .combo-table tbody tr.on td { font-weight: 700; }
 .combo-table .muted, .combo-note { color: var(--muted); }
 .combo-note { font-size: 13px; margin: 6px 0 0; }
+
+/* Live (MTG Arena) */
+body[data-mode="live"] .draft-only, body[data-mode="live"] .sealed-only, body[data-mode="live"] .no-live { display: none; }
+.live-legend { color: var(--muted); font-size: 13px; margin: -4px 0 12px; max-width: 90ch; }
+.pack.live .card { cursor: default; }
+.pack.live .card:hover { transform: none; }
+.model .sub { display: flex; justify-content: space-between; gap: 6px; margin-top: 3px; opacity: .9; font-size: 11px; }
+.model .wheel.likely { color: #8ee6a8; font-weight: 700; }
+.card.unknown .name { display: block; }
+.card.unknown .model { display: block; }
+#live-note.warn { color: var(--pick); }
+
+#live-log caption { text-align: left; color: var(--muted); padding: 6px 0; }
+#live-log tr[data-t] { cursor: pointer; }
+#live-log tr[data-t]:hover td { background: var(--panel); }
+#live-log tr.focus td { font-weight: 700; }
+#live-which { max-width: 26em; }
