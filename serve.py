@@ -6,27 +6,40 @@ credentialless support (Safari) fall back to one thread.
 
 It also serves MTG Arena's log for the page's Live tab (only to this machine):
   /api/arena/status                     where the log and Arena's card database are, and whether detailed logs are on
-  /api/arena/history                    Arena's per-session logs (UTC_Log - *.log, kept in its install folder for a few
-                                        weeks): [{name, size, mtime}], oldest first
-  /api/arena/log?file=cur|prev|<session log name>&from=N&id=X
+  /api/arena/history?source=S           a source's old logs: [{name, size, mtime}], oldest first. S is
+                                          arena     Arena's per-session logs (UTC_Log - *.log, kept in its install folder
+                                                    for a few weeks); the default
+                                          archive   tools/archive_arena_logs.sh's copies (~/mtga-log-archive/*.log.gz)
+                                          examples  the scrubbed example logs in the repo (tools/fixtures/arena/*.log.gz)
+  /api/arena/pick                       opens a file dialog on this machine for any log (the page's own file picker can't
+                                        reach ~/Library or AppData, and can't follow a file that's still growing):
+                                        {file, name, path} to read as log?source=picked&file=<file>, or {cancelled: true}.
+                                        Only a file chosen in the dialog can be read this way; status lists the last one.
+  /api/arena/log?file=cur|prev|<log name>&source=S&from=N&id=X
                                         the log's draft-related entries from byte N on: {id, size, next, reset, entries:
                                         [{at, text}]}. The last entry may still be growing, so `next` is its start and it is
                                         sent again next time. A different file id (Arena restarted) starts over at 0.
+                                        A .gz log is read whole (offsets count its unzipped bytes).
   /api/arena/cards?ids=1,2              Arena card ids (grpIds) -> {name, set}, from Arena's card database
 Arena writes the log only with Options > Account > Detailed Logs (Plugin Support) on. Set MTGA_LOG_DIR,
-MTGA_CARD_DB or MTGA_HISTORY_DIR if Arena lives somewhere unusual.
+MTGA_CARD_DB or MTGA_HISTORY_DIR if Arena lives somewhere unusual, and MTGA_ARCHIVE_DIR for an archive kept elsewhere.
 """
 import glob
+import gzip
 import http.server
 import json
 import os
 import re
 import sqlite3
+import subprocess
 import sys
 import urllib.parse
 from pathlib import Path
 
 HOME = Path.home()
+SITE = Path(__file__).resolve().parent
+ARCHIVE_DIR = Path(os.environ.get("MTGA_ARCHIVE_DIR") or HOME / "mtga-log-archive")
+EXAMPLES_DIR = SITE / "tools/fixtures/arena"
 LOG_DIRS = [os.environ.get("MTGA_LOG_DIR"), HOME / "Library/Logs/Wizards Of The Coast/MTGA",
             HOME / "AppData/LocalLow/Wizards Of The Coast/MTGA"]
 RAW = "MTGA_Data/Downloads/Raw/Raw_CardDatabase_*.mtga"
@@ -60,6 +73,43 @@ def history_logs():
     return sorted(found.values(), key=lambda p: p.stat().st_mtime)
 
 
+def source_logs(source):
+    """A source's old logs, oldest first. The archive's and the examples' names start with the session's start time."""
+    if source == "archive":
+        return sorted(ARCHIVE_DIR.glob("*.log.gz"))
+    if source == "examples":
+        return sorted(EXAMPLES_DIR.glob("*.log.gz"))
+    return history_logs()
+
+
+PICKED = {}  # file id -> a log chosen in the file dialog, the last one last
+
+
+def choose_file():
+    """A log chosen in the system's file dialog, opened in Arena's log folder; None if cancelled."""
+    start = next((Path(d) for d in LOG_DIRS if d and Path(d).is_dir()), HOME)
+    if sys.platform == "darwin":
+        cmd = ["osascript", "-e", f'POSIX path of (choose file with prompt "Choose an MTG Arena log" '
+                                  f'default location (POSIX file "{start}"))']
+    elif sys.platform == "win32":
+        cmd = ["powershell", "-NoProfile", "-STA", "-Command",
+               "Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.OpenFileDialog; "
+               f"$d.Title = 'Choose an MTG Arena log'; $d.InitialDirectory = '{start}'; "
+               "if ($d.ShowDialog() -eq 'OK') { $d.FileName }"]
+    else:
+        cmd = ["zenity", "--file-selection", "--title=Choose an MTG Arena log", f"--filename={start}/"]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    path = r.stdout.strip()
+    return Path(path) if r.returncode == 0 and path else None
+
+
+def picked(path):
+    fid = next((k for k, v in PICKED.items() if v == path), f"picked-{len(PICKED) + 1}")
+    PICKED.pop(fid, None)
+    PICKED[fid] = path
+    return {"file": fid, "name": path.name, "path": str(path)}
+
+
 def card_db():
     found = [p for pat in CARD_DBS if pat for p in glob.glob(pat)]
     return max(found, key=os.path.getmtime) if found else None
@@ -88,19 +138,28 @@ def slim(chunk):
 def read_log(path, start, file_id):
     st = path.stat()
     fid = f"{st.st_ino}-{int(st.st_birthtime if hasattr(st, 'st_birthtime') else st.st_ctime)}"
-    reset = fid != file_id or start > st.st_size
+    if path.suffix == ".gz":  # an archived log doesn't grow: read it whole
+        with gzip.open(path, "rb") as f:
+            data = f.read()
+        size = len(data)
+    else:
+        size = st.st_size
+    reset = fid != file_id or start > size
     if reset:
         start = 0
-    with open(path, "rb") as f:
-        f.seek(start)
-        data = f.read()
+    if path.suffix == ".gz":
+        data = data[start:]
+    else:
+        with open(path, "rb") as f:
+            f.seek(start)
+            data = f.read()
     starts = [m.start() for m in ENTRY.finditer(data)]
     entries = []
     for i, s in enumerate(starts):
         chunk = data[s:starts[i + 1] if i + 1 < len(starts) else len(data)]
         if any(k in chunk for k in KEYS):
             entries.append({"at": start + s, "text": ENTRY.sub(b"", slim(chunk), 1).decode("utf-8", "replace")})
-    return {"id": fid, "size": st.st_size, "next": start + (starts[-1] if starts else 0), "reset": reset,
+    return {"id": fid, "size": size, "next": start + (starts[-1] if starts else 0), "reset": reset,
             "entries": entries}
 
 
@@ -147,13 +206,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if url.path == "/api/arena/status":
                 cur = log_path("cur")
                 body = {"log": str(cur) if cur else None, "cardDb": card_db(),
-                        "detailed": detailed_logs(cur) if cur else None}
+                        "detailed": detailed_logs(cur) if cur else None,
+                        "archive": {"dir": str(ARCHIVE_DIR), "logs": len(source_logs("archive"))},
+                        "examples": {"logs": len(source_logs("examples"))},
+                        "picked": picked(list(PICKED.values())[-1]) if PICKED else None}
+            elif url.path == "/api/arena/pick":
+                path = choose_file()
+                body = picked(path) if path else {"cancelled": True}
             elif url.path == "/api/arena/history":
-                body = [{"name": p.name, "size": p.stat().st_size, "mtime": p.stat().st_mtime} for p in history_logs()]
+                body = [{"name": p.name, "size": p.stat().st_size, "mtime": p.stat().st_mtime}
+                        for p in source_logs(q.get("source", "arena"))]
             elif url.path == "/api/arena/log":
-                which = q.get("file", "cur")
-                path = log_path(which) if which in ("cur", "prev") else \
-                    next((p for p in history_logs() if p.name == which), None)  # only a listed log, never a path
+                which, source = q.get("file", "cur"), q.get("source", "arena")
+                path = PICKED.get(which) if source == "picked" else \
+                    log_path(which) if which in ("cur", "prev") and source == "arena" else \
+                    next((p for p in source_logs(source) if p.name == which), None)  # only a listed log, never a path
                 if not path:
                     return self.send_error(404, "No Arena log found")
                 body = read_log(path, int(q.get("from", 0)), q.get("id", ""))

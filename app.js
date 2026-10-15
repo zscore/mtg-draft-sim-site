@@ -931,8 +931,12 @@ async function showDraftBuild(seatIdx) {
 // wheel odds (draft.js WheelSim) and each card's first-pick rank in the set; then your picks, PickNet's view of each
 // pick, and the deck builder on your pool. Older drafts come from Arena's session logs, and any pick, old or new, can
 // be looked at again (live.focus: its slot). The tab only appears when serve.py serves the page.
-const live = { drafts: new ArenaDrafts(), files: {}, names: new Map(), codes: [], ranks: new Map(), gen: 0, view: null,
-  history: [], merged: new Map(), which: 'latest', focus: null, nets: {} };
+// live.source picks the logs: 'arena' (Arena's own, followed live), 'archive' (tools/archive_arena_logs.sh's copies)
+// or 'examples' (the repo's scrubbed logs); those two are read once, with nothing to follow. 'picked' follows one log
+// chosen in serve.py's file dialog (live.picked: {file, name, path}).
+const live = { source: 'arena', picked: null, drafts: new ArenaDrafts(), files: {}, names: new Map(), codes: [], ranks: new Map(),
+  gen: 0, view: null, history: [], merged: new Map(), which: 'latest', focus: null, nets: {} };
+const SOURCES = ['arena', 'archive', 'examples', 'picked'];
 const POLL_MS = 1000;
 const normName = (n) => n.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const pct = (p) => `${(p * 100).toFixed(p < 0.1 ? 1 : 0)}%`;
@@ -949,8 +953,8 @@ async function api(path) {
 // One log file's new entries -> events into live.drafts; true if there were any. The last entry comes again each
 // time (it may still be growing), so entries already read are skipped by their offset.
 async function readLog(file) {
-  const f = live.files[file] ??= { id: '', from: 0, seen: new Set() };
-  const r = await api(`log?file=${file}&from=${f.from}&id=${encodeURIComponent(f.id)}`);
+  const drafts = live.drafts, f = live.files[file] ??= { id: '', from: 0, seen: new Set() };
+  const r = await api(`log?source=${live.source}&file=${encodeURIComponent(file)}&from=${f.from}&id=${encodeURIComponent(f.id)}`);
   if (r.reset) f.seen.clear();
   Object.assign(f, { id: r.id, from: r.next });
   let changed = false;
@@ -959,44 +963,99 @@ async function readLog(file) {
     const evs = parseEntry(e.text);
     if (evs === null) continue; // not all written yet
     f.seen.add(e.at);
-    for (const ev of evs) { live.drafts.add(ev); changed = true; }
+    for (const ev of evs) { drafts.add(ev); changed = true; }
   }
   return changed;
 }
 
-// Every draft in Arena's session logs, read once. Each log gets its own tracker: drafts don't carry over between
-// sessions, except one Arena restarted in the middle of, which mergeDrafts puts back together.
+// Every draft in the source's old logs (Arena's session logs, or the archived or example ones), read once. Each log
+// gets its own tracker: drafts don't carry over between sessions, except one Arena restarted in the middle of, which
+// mergeDrafts puts back together.
 async function loadHistory() {
-  for (const f of await api('history')) {
-    const r = await api(`log?file=${encodeURIComponent(f.name)}&from=0&id=`), a = new ArenaDrafts();
+  const { source, history } = live, q = `source=${source}`;
+  for (const f of await api(`history?${q}`)) {
+    const r = await api(`log?${q}&file=${encodeURIComponent(f.name)}&from=0&id=`), a = new ArenaDrafts();
     for (const e of r.entries) for (const ev of parseEntry(e.text) || []) a.add(ev);
-    for (const d of a.drafts) live.history.push(Object.assign(d, { source: f.name }));
+    for (const d of a.drafts) history.push(Object.assign(d, { source: f.name }));
   }
+}
+
+// Start over on another source's logs.
+function setSource(source) {
+  clearTimeout(live.timer);
+  pref.set('live-source', source);
+  $('#live-source').value = source;
+  Object.assign(live, { source, drafts: new ArenaDrafts(), files: {}, history: [], merged: new Map(), which: 'latest',
+    focus: null, view: null, started: false, loaded: false, error: null });
+  $('#live-build-holder').replaceChildren();
+  showLive();
+  pollLive();
+}
+
+// A log chosen in serve.py's file dialog, to follow (it may open behind the browser).
+async function pickLog() {
+  $('#live-source').value = live.source; // until one is chosen
+  liveNote('Choose a log in the file dialog (it may have opened behind this window)…');
+  let r;
+  try {
+    r = await api('pick');
+  } catch (e) {
+    return liveNote(`Couldn't open a file dialog: ${e.message}`, true);
+  }
+  if (r.cancelled) return showLive();
+  setPicked(r);
+  setSource('picked');
+}
+
+function setPicked(r) {
+  live.picked = r;
+  const sel = $('#live-source');
+  let o = sel.querySelector('option[value="picked"]');
+  if (!o) sel.querySelector('option[value="pick"]').before(o = new Option('', 'picked'));
+  o.text = `File: ${r.name}`;
+  o.title = r.path;
 }
 
 // Old logs and this session's as one list of drafts, oldest first.
 const allDrafts = () => mergeDrafts([...live.history, ...live.drafts.drafts], live.merged);
 
-// Read the previous session's log once (a draft may have started there), then follow the current one.
+// Read the previous session's log once (a draft may have started there), then follow the current one, or the chosen
+// log. Archived and example logs, and a chosen .gz, are only read once.
 async function pollLive() {
   clearTimeout(live.timer);
   if (live.polling || mode !== 'live') return;
+  const picked = live.source === 'picked' ? live.picked : null;
+  if (live.source === 'archive' || live.source === 'examples') {
+    if (live.started) return;
+    live.started = true;
+    const source = live.source;
+    liveNote('Reading the logs…');
+    return loadHistory().then(() => { if (live.source === source) { live.loaded = true; showLive(); } }, (e) => {
+      if (live.source === source) liveNote(`Couldn't read the ${source === 'archive' ? 'archived' : 'example'} logs: ${e.message}`, true);
+    });
+  }
   live.polling = true;
   try {
-    if (!live.started) {
+    if (!live.started && !picked) {
       live.started = true;
       await readLog('prev').catch(() => { /* no previous log */ });
-      loadHistory().then(showLive, (e) => status(`Couldn't read Arena's older logs: ${e.message}`));
+      const source = live.source;
+      loadHistory().then(() => live.source === source && showLive(), (e) => status(`Couldn't read Arena's older logs: ${e.message}`));
     }
-    if ((await readLog('cur')) || !live.view) showLive();
+    const changed = await readLog(picked ? picked.file : 'cur');
+    if (picked) for (const d of live.drafts.drafts) d.source ??= picked.name; // its name may date it
+    if (changed || !live.started || !live.view) { live.started = live.loaded = true; showLive(); }
     live.error = null;
   } catch (e) {
-    if (!live.error) liveNote(`Can't read Arena's log: ${e.message}`, true);
+    if (!live.error) {
+      liveNote(!picked ? `Can't read Arena's log: ${e.message}` : / 404/.test(e.message)
+        ? `serve.py has lost ${picked.path} (was it restarted?). Choose it again from the Logs menu.` : `Can't read ${picked.path}: ${e.message}`, true);
+    }
     live.error = e;
   } finally {
     live.polling = false;
   }
-  if (mode === 'live') live.timer = setTimeout(pollLive, POLL_MS);
+  if (mode === 'live' && !(picked && (picked.name.endsWith('.gz') || / 404/.test(live.error?.message)))) live.timer = setTimeout(pollLive, POLL_MS);
 }
 
 function liveNote(text, warn = false) {
@@ -1052,10 +1111,13 @@ function liveState(d, s) {
 }
 
 // When a draft happened: the start of its session, from the session log's name ("UTC_Log - 10-13-2026 18.35.07.log",
-// in UTC), or null for one only in this session's Player.log (it's happening now).
+// in UTC; an archived one "2026-10-14_102834_77dbf69c.log.gz", in local time), or null for one only in this
+// session's Player.log (it's happening now).
 function draftWhen(d) {
   const m = /(\d+)-(\d+)-(\d+) (\d+)\.(\d+)/.exec(d.source || '');
-  return m ? new Date(Date.UTC(+m[3], m[1] - 1, +m[2], +m[4], +m[5])) : null;
+  if (m) return new Date(Date.UTC(+m[3], m[1] - 1, +m[2], +m[4], +m[5]));
+  const a = /^(\d{4})-(\d\d)-(\d\d)_(\d\d)(\d\d)/.exec(d.source || '');
+  return a ? new Date(+a[1], a[2] - 1, +a[3], +a[4], +a[5]) : null;
 }
 
 // "Tue, Oct 13, 08:35 PM" (your time), or "today".
@@ -1093,6 +1155,16 @@ async function showLive() {
     $('#live-title').textContent = 'Live draft';
     for (const id of ['#live-pick', '#live-pool-view', '#live-build', '#live-log-view']) $(id).hidden = true;
     const st = live.status || {};
+    if (live.source === 'picked') {
+      if (live.loaded && live.picked) liveNote(`Following ${live.picked.path}. Drafts show up here as Arena logs them.`);
+      return;
+    }
+    if (live.source !== 'arena') {
+      if (!live.started) return;
+      const dir = live.source === 'archive' ? `${st.archive?.dir ?? '~/mtga-log-archive'} (tools/archive_arena_logs.sh fills it; set MTGA_ARCHIVE_DIR for serve.py if yours is elsewhere)`
+        : 'tools/fixtures/arena';
+      return live.loaded ? liveNote(`No drafts in ${dir}.`, true) : liveNote('Reading the logs…');
+    }
     liveNote(!st.log ? 'No MTG Arena log found. Is Arena installed? (Set MTGA_LOG_DIR for serve.py if it lives somewhere unusual.)'
       : st.detailed === false ? 'Arena\'s detailed logs are off: turn on Options → Account → Detailed Logs (Plugin Support), then restart Arena.'
         : 'Watching Arena\'s log. Start a draft in Arena and it shows up here.', !st.log || st.detailed === false);
@@ -1484,10 +1556,19 @@ async function init() {
   api('status').then((st) => {
     live.status = st;
     $('#live-tab').hidden = false;
+    for (const o of $('#live-source').options) {
+      const n = st[o.value]?.logs;
+      if (n !== undefined) o.text += ` (${n} log${n === 1 ? '' : 's'})`;
+    }
+    if (st.picked) setPicked(st.picked);
+    const src = pref.get('live-source', 'arena');
+    live.source = SOURCES.includes(src) && (src !== 'picked' || live.picked) ? src : 'arena';
+    $('#live-source').value = live.source;
     if (wanted === 'live') setMode('live');
   }).catch(() => { /* a static host: no Live tab */ });
   $('#skill').addEventListener('change', () => { if (mode === 'live') showLive(); });
   $('#live-build-btn').onclick = () => live.view && liveBuild(live.view);
+  $('#live-source').onchange = () => ($('#live-source').value === 'pick' ? pickLog() : setSource($('#live-source').value));
   $('#live-which').onchange = () => { live.which = $('#live-which').value; live.focus = null; showLive(); };
   $('#live-prev').onclick = () => liveStep(-1);
   $('#live-next').onclick = () => liveStep(1);

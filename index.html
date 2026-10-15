@@ -99,6 +99,12 @@
     <section id="live-view" hidden>
       <div class="bar">
         <h2 id="live-title">Live draft</h2>
+        <label title="Where the drafts come from">Logs <select id="live-source">
+          <option value="arena" title="Arena's own logs: the draft you're in, and the session logs Arena keeps for a few weeks">Arena (live)</option>
+          <option value="archive" title="The copies tools/archive_arena_logs.sh keeps (~/mtga-log-archive, or MTGA_ARCHIVE_DIR)">Archived logs</option>
+          <option value="examples" title="The scrubbed example logs in the repo (tools/fixtures/arena)">Example logs, anonymized</option>
+          <option value="pick" title="Follow any log file, e.g. Arena's Player.log while you draft (serve.py opens a file dialog)">Choose a log file…</option>
+        </select></label>
         <label>Draft <select id="live-which" title="Your drafts from Arena's logs (Arena keeps a few weeks of them). Latest follows the draft you're in."></select></label>
         <p id="live-note"></p>
       </div>

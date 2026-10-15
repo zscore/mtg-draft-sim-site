@@ -60,6 +60,18 @@ for building. arena.js parses the log: Premier and Traditional Draft
 event pools (CardPool). In Quick Draft the other seats are Arena's bots, not the humans PickNet learned
 from, so the wheel odds are rougher there.
 
+The Logs menu picks where the drafts come from:
+- Arena (live): Arena's own logs, as above, following the draft you're in.
+- Archived logs: the copies tools/archive_arena_logs.sh keeps in ~/mtga-log-archive (MTGA_ARCHIVE_DIR for serve.py
+  if they're elsewhere), so drafts older than Arena's few weeks of session logs can be gone back over.
+- Example logs, anonymized: the scrubbed logs in tools/fixtures/arena (tools/scrub_arena_log.py), to try the tab
+  without Arena. They hold two FRA Premier Draft pools but none of the picks, so they open on the pool and deck builder.
+  Naming their cards still needs Arena's card database on the machine.
+- Choose a log file…: follows any log you pick, as it grows (Arena's Player.log while you draft, a log from another
+  install, an archived .log.gz). serve.py opens the system's file dialog (it starts in Arena's log folder, and may
+  open behind the browser), since the page's own file picker can't open ~/Library or AppData and can't follow a file
+  that's still being written. The page remembers the file until serve.py restarts.
+
 ## Mana base
 
 Both builds get their lands from the same rules (deck.js manaBase), working from the spells alone:
