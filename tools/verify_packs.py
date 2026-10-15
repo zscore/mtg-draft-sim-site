@@ -17,6 +17,7 @@ Needs numpy, scipy, polars and node (wheelnet's or picknet's .venv has the Pytho
 import argparse
 import json
 import subprocess
+import os
 from collections import Counter
 from pathlib import Path
 
@@ -27,7 +28,7 @@ from scipy import stats
 from fit_rates import half
 
 SITE = Path(__file__).resolve().parents[1]
-PARQUET = Path("/Users/zblanton/Documents/repos/mtg-data/data/parquet")
+PARQUET = Path(os.environ.get("MTG_DATA_DIR") or SITE.parent / "mtg-data" / "data") / "parquet"
 
 
 def real_packs(code, ids_by_name, n, rng):

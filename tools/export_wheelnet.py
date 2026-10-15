@@ -33,7 +33,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-OPEN_LANE = Path("/Users/zblanton/Documents/repos/wheelnet")
+OPEN_LANE = Path(__file__).resolve().parents[2] / "wheelnet"
 sys.path[:0] = [str(OPEN_LANE / "src")]
 from mtgdata.data import N_PACKS, RANK_ORDER, load_tensors  # noqa: E402
 from mtgdata.encode import draft_context, splits_for  # noqa: E402

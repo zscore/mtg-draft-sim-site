@@ -13,6 +13,7 @@ Prints values for tools/collation.py's arena=.
 """
 import itertools
 import json
+import os
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -25,7 +26,7 @@ from scipy.stats import chi2
 from collation import SETS, per_card
 
 SITE = Path(__file__).resolve().parents[1]
-PARQUET = Path("/Users/zblanton/Documents/repos/mtg-data/data/parquet")
+PARQUET = Path(os.environ.get("MTG_DATA_DIR") or SITE.parent / "mtg-data" / "data") / "parquet"
 # Sheets that are just part of a main-set rarity for this purpose (rare dual lands, Turtles).
 RARITY = {"DUAL": "R", "TC": "C", "TU": "U", "TR": "R", "TM": "M"}
 group = lambda s: RARITY.get(s, s)

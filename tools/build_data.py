@@ -9,6 +9,7 @@ name to the set's 17Lands card list. Scryfall lookups are cached in tools/scryfa
 tools/scryfall_sheets.json.
 """
 import json
+import os
 import re
 import subprocess
 import sys
@@ -23,9 +24,9 @@ import numpy as np
 from collation import SETS, per_card
 from mana_facts import add_mana_facts
 
-DATA = Path("/Users/zblanton/Documents/repos/mtg-data/data")  # shared 17Lands data (mtg-data)
-SHARDS = DATA / "features" / "picks_all"
 SITE = Path(__file__).resolve().parents[1]
+DATA = Path(os.environ.get("MTG_DATA_DIR") or SITE.parent / "mtg-data" / "data")  # shared 17Lands data (mtg-data)
+SHARDS = DATA / "features" / "picks_all"
 CACHE = SITE / "tools" / "scryfall_cache.json"
 SHEET_CACHE = SITE / "tools" / "scryfall_sheets.json"
 HEADERS = {"User-Agent": "mtg-draft-sim-site/0.1", "Accept": "application/json",

@@ -29,8 +29,8 @@ import numpy as np
 import polars as pl
 import torch
 
-SYN = Path("/Users/zblanton/Documents/repos/mtg-open-lane-synergy")
-OL = Path("/Users/zblanton/Documents/repos/wheelnet")
+SYN = Path(__file__).resolve().parents[2] / "mtg-open-lane-synergy"
+OL = Path(__file__).resolve().parents[2] / "wheelnet"
 sys.path.insert(0, str(SYN / "src"))
 from openlane.cardinfo import DECK_FEATURES, card_info, deck_features  # noqa: E402
 from openlane.data import COLORS, PARQUET, RAW  # noqa: E402

@@ -9,6 +9,7 @@ The card table (learned name vectors + projected card features) is precomputed i
 one pass of the history transformer over T <= 45 tokens plus the pack blocks over <= 15 cards.
 Inputs are int32 so the page can feed Int32Arrays.
 """
+import os
 import sys
 import time
 from pathlib import Path
@@ -18,9 +19,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-PICKNET = Path("/Users/zblanton/Documents/repos/picknet")
-DATA = Path("/Users/zblanton/Documents/repos/mtg-data/data")  # shared 17Lands data (mtg-data)
-sys.path[:0] = [str(PICKNET / "src"), str(DATA.parent / "src")]
+PICKNET = Path(__file__).resolve().parents[2] / "picknet"
+DATA = Path(os.environ.get("MTG_DATA_DIR") or PICKNET.parent / "mtg-data" / "data")  # shared 17Lands data (mtg-data)
+sys.path[:0] = [str(PICKNET / "src"), str(PICKNET.parent / "mtg-data" / "src")]
 from picknet.model import PickNet, bag  # noqa: E402
 
 SITE = Path(__file__).resolve().parents[1]

@@ -190,3 +190,9 @@ a.tab:hover { border-color: var(--accent); }
 .doc pre code { border: 0; padding: 0; background: none; overflow-wrap: normal; }
 .doc dt { font-weight: 600; margin-top: 12px; }
 .doc dd { margin: 4px 0 0 0; }
+.doc h4 { font-size: 15px; margin: 20px 0 6px; }
+.papers { display: grid; gap: 12px; }
+.paper { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 4px 16px 10px; margin: 0; }
+.paper h4 { margin-top: 12px; }
+.paper .links { padding-left: 18px; margin: 8px 0 0; }
+.paper .links li { margin-bottom: 4px; font-size: 14px; }

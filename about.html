@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>About · Draft vs PickNet</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1><a class="home" href="./">Draft vs PickNet</a></h1>
+    <nav class="tabs">
+      <a class="tab" href="./">Back to the drafts</a>
+      <a class="tab" href="run-locally.html">Run it locally</a>
+    </nav>
+  </header>
+
+  <main class="doc">
+    <h2 class="doc-title">About Draft vs PickNet</h2>
+    <p class="lede"><a href="https://zscore.github.io/mtg-draft-sim-site/">Draft vs PickNet</a> is a <i>Magic: The
+      Gathering</i> draft simulator that runs entirely in your browser. You draft against seven bots driven by PickNet,
+      a model trained on human drafts from <a href="https://www.17lands.com">17Lands</a>. Packs are opened from each
+      set's MTG Arena collation. When the draft ends, a deck model trained on 17Lands game results builds your deck.
+      The same tools work on sealed pools.</p>
+    <p>Run a copy on your own computer and you also get the <b>Live</b> tab. It follows your MTG Arena drafts as you
+      make them, with PickNet's pick and WheelNet's wheel odds for the pack in hand. See
+      <a href="run-locally.html">Run it locally</a> for how.</p>
+    <p>The code for this site is at <a href="https://github.com/zscore/mtg-draft-sim-site">github.com/zscore/mtg-draft-sim-site</a>.</p>
+
+    <h3>The research behind it</h3>
+    <p>Each model has its own repository and write-up. The PDFs open on GitHub.</p>
+
+    <div class="papers">
+      <section class="paper">
+        <h4>PickNet: what would a human pick?</h4>
+        <p>An 8.4M-parameter transformer that predicts which card a human drafter takes from a pack. It reads the
+          whole draft so far: every pack shown, every pick made, and what the other seven drafters took. One model
+          covers every set on the site. In the paper's 17 sets, it agrees with the human pick on 70.8% of held-out
+          picks. On the site it drives
+          the bots, the "PickNet's view" percentages and the pick ratings.</p>
+        <ul class="links">
+          <li><a href="https://github.com/zscore/picknet/blob/main/paper/picknet/picknet.pdf">PickNet: One Transformer for Human Draft Picks in <i>Magic: The Gathering</i>, Trained on 17 Sets</a> (paper, PDF)</li>
+          <li><a href="https://github.com/zscore/picknet/blob/main/paper/picknet/architecture.pdf">How PickNet Works</a> (step-by-step architecture guide, PDF)</li>
+          <li>Code: <a href="https://github.com/zscore/picknet">zscore/picknet</a></li>
+        </ul>
+      </section>
+
+      <section class="paper">
+        <h4>WheelNet: will this card come back?</h4>
+        <p>A pack you pass returns eight picks later. WheelNet predicts which of the cards you passed will still be
+          in it, from the raw draft history, and cuts log loss by 8.6% against the usual per-card average (ALSA).
+          The paper also asks whether reading an open lane pays. On the site, WheelNet gives the wheel odds on the
+          Live tab.</p>
+        <ul class="links">
+          <li><a href="https://github.com/zscore/wheelnet/blob/master/paper/wheelnet/wheelnet.pdf">Will It Wheel? Predicting Which Passed Cards Come Back in <i>Magic: The Gathering</i> Drafts, and Whether the Open Lane Pays</a> (paper, PDF)</li>
+          <li><a href="https://github.com/zscore/wheelnet/blob/master/paper/wheelnet/architecture.pdf">How WheelNet Works</a> (step-by-step architecture guide, PDF)</li>
+          <li>Code: <a href="https://github.com/zscore/wheelnet">zscore/wheelnet</a></li>
+        </ul>
+      </section>
+
+      <section class="paper">
+        <h4>TableNet: one network for picks and wheels</h4>
+        <p>PickNet and WheelNet combined: the all-sets pick model with a wheel head, trained on both tasks at once.
+          This is work in progress and not on the site yet. The notes cover the design and what the October runs
+          showed about where its wheel predictions fall short of the per-set WheelNets. TableNet lives in the
+          wheelnet repository.</p>
+        <ul class="links">
+          <li><a href="https://github.com/zscore/wheelnet/blob/master/paper/combined/architecture.pdf">TableNet: One Network for Picks and Wheels</a> (design note, PDF)</li>
+          <li><a href="https://github.com/zscore/wheelnet/blob/master/paper/combined/overnight_findings.pdf">TableNet: Where the Wheel Gap Comes From</a> (research note, PDF)</li>
+          <li><a href="https://github.com/zscore/wheelnet/blob/master/paper/combined/tablenet_whist_diagram.pdf">TableNet with a wheel history encoder</a> (diagram, PDF)</li>
+        </ul>
+      </section>
+
+      <section class="paper">
+        <h4>Deck strength: how good is this deck?</h4>
+        <p>How strong a drafted deck is, separately from who plays it, from 17Lands game data across 12 sets, along
+          with what each card is worth and whether card synergy is real. The deck builder's "Build best deck" and its
+          predicted win rates come from the game-level model in this work.</p>
+        <ul class="links">
+          <li><a href="https://github.com/zscore/mtg-deck-strength/blob/main/reports/Skill-Adjusted%20Deck%20Strength%20from%2017Lands%20Data.pdf">Skill-Adjusted Deck Strength from 17Lands Data</a> (report, PDF)</li>
+          <li><a href="https://github.com/zscore/mtg-deck-strength/blob/main/reports/Deck%20strength%20overnight%20results.pdf">Deck strength: overnight results</a> (research note, PDF)</li>
+          <li><a href="https://github.com/zscore/mtg-deck-strength/blob/main/reports/Transformer%20deck%20strength%20models.pdf">Transformers should join the blend, not replace it</a> (literature review, PDF)</li>
+          <li>Code: <a href="https://github.com/zscore/mtg-deck-strength">zscore/mtg-deck-strength</a></li>
+        </ul>
+      </section>
+
+      <section class="paper">
+        <h4>mtg-data: the shared data</h4>
+        <p>The data layer every model above uses. It downloads 17Lands' public draft, game and replay files, converts
+          them to parquet, and holds the card encodings the models share.</p>
+        <ul class="links">
+          <li>Code: <a href="https://github.com/zscore/mtg-data">zscore/mtg-data</a></li>
+          <li>Data: <a href="https://www.17lands.com/public_datasets">17Lands public datasets</a>
+            (please check their <a href="https://www.17lands.com/usage_guidelines">usage guidelines</a>)</li>
+        </ul>
+      </section>
+    </div>
+
+    <h3>Updating everything</h3>
+    <p>When 17Lands publishes new data, or a new set comes out, the models and the site's data are rebuilt in this
+      order: data, then models, then the site. This takes a machine with about 30 GB free and a few hours of
+      training. Most people don't need to do it. Running the site locally (<a href="run-locally.html">Run it
+      locally</a>) only needs this repository.</p>
+
+    <h4>0. Put the repositories side by side</h4>
+    <p>The tools find each other by folder name, so clone them all into one folder:</p>
+    <pre><code>mkdir mtg && cd mtg
+git clone https://github.com/zscore/mtg-data.git
+git clone https://github.com/zscore/picknet.git
+git clone https://github.com/zscore/wheelnet.git
+git clone https://github.com/zscore/mtg-deck-strength.git
+git clone https://github.com/zscore/mtg-draft-sim-site.git</code></pre>
+    <p>Each model repository has its own Python environment, with mtg-data installed into it:</p>
+    <pre><code>cd picknet
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ../mtg-data -r requirements.txt</code></pre>
+    <p class="note">Do the same in <code>wheelnet</code> (it also needs <code>-e ../picknet</code>) and
+      <code>mtg-deck-strength</code>.</p>
+
+    <h4>1. Download the data (mtg-data)</h4>
+    <p>From any of those environments, inside <code>mtg-data</code>:</p>
+    <pre><code>python scripts/download.py            # every set (about 26 GB)
+python scripts/download.py FRA        # or just the sets you name</code></pre>
+    <p>This downloads 17Lands' files, converts them to parquet, and sanity-checks them. Everything goes in
+      <code>mtg-data/data/</code>. Set <code>MTG_DATA_DIR</code> to keep it somewhere else; every repository and the
+      site's tools read the same variable. To refresh a set with a newer 17Lands file, delete its cached raw and
+      parquet files first.</p>
+
+    <h4>2. Retrain PickNet (picknet)</h4>
+    <p>The all-sets model is fine-tuned, not trained from scratch. Its card table only ever grows, so a new set's
+      cards are appended:</p>
+    <pre><code>python scripts/card_text_embeddings.py NEW   # rules-text embeddings for the new set's cards
+python scripts/build_pick_shards.py NEW      # adds NEW to the card table and builds its shards
+python scripts/train_picknet_all.py name=all_d256_new ... init=results/picknet_all/models/&lt;latest&gt;.pt</code></pre>
+    <p class="note">The <a href="https://github.com/zscore/picknet#adding-a-set">"Adding a set" section of the
+      PickNet README</a> has the full training command and the checks to run first. Fine-tune on all sets, not just
+      the new one, so the others don't drift.</p>
+
+    <h4>3. Train a WheelNet for the set (wheelnet)</h4>
+    <pre><code>python scripts/build_dataset.py NEW    # wheel labels and features
+python scripts/train_nn.py NEW         # the WheelNet transformer</code></pre>
+
+    <h4>4. Rebuild the site's data (mtg-draft-sim-site)</h4>
+    <p>A new set first needs its pack collation in <code>tools/collation.py</code>. Then:</p>
+    <pre><code>python tools/export_model.py [checkpoint.pt]        # PickNet -> model/picknet.onnx (picknet's environment)
+python tools/build_data.py NEW                      # cards, Scryfall images, collation, mana facts -> data/NEW.json
+../wheelnet/.venv/bin/python tools/export_wheelnet.py NEW   # WheelNet -> model/wheelnet_NEW.onnx
+python tools/export_deck_model.py NEW               # deck model -> data/deck/NEW.json</code></pre>
+    <p class="note">The deck-model export still imports code from before the deck work moved to mtg-deck-strength.
+      It needs updating to the new repository before it runs again. Until then, sets keep the deck models they have,
+      and a new set gets the PickNet build only.</p>
+    <p>Check the exports against the originals before publishing:</p>
+    <pre><code>python tools/make_fixture.py && node tools/verify_js.mjs   # the browser's PickNet vs PyTorch
+node tools/check_wheelnet.mjs NEW                          # the browser's WheelNet inputs vs training
+node tools/verify_deck.mjs NEW                             # the browser's deck model vs PyTorch
+python tools/verify_packs.py NEW                           # generated packs vs real 17Lands packs</code></pre>
+    <p>Then commit and push to <code>master</code>. GitHub Pages republishes the site within a minute or two.</p>
+
+    <h3>Credits</h3>
+    <p>Draft and game data from <a href="https://www.17lands.com">17Lands</a>. Card images and oracle text from
+      <a href="https://scryfall.com">Scryfall</a>. The models run in the browser with
+      <a href="https://onnxruntime.ai">ONNX Runtime Web</a>.</p>
+  </main>
+
+  <footer>
+    Draft vs PickNet is unofficial Fan Content permitted under the
+    <a href="https://company.wizards.com/en/legal/fancontentpolicy">Fan Content Policy</a>. Not approved/endorsed by
+    Wizards. Portions of the materials used are property of Wizards of the Coast. &copy;Wizards of the Coast LLC.
+    Card images from <a href="https://scryfall.com">Scryfall</a>; draft data from <a href="https://www.17lands.com">17Lands</a>.
+  </footer>
+</body>
+</html>

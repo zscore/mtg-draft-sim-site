@@ -13,12 +13,14 @@ Per card, only when set:
 """
 import gzip
 import json
+import os
 import re
 import sys
 from pathlib import Path
 
 SITE = Path(__file__).resolve().parents[1]
-ORACLE = Path("/Users/zblanton/Documents/repos/mtg-data/data/raw/scryfall_oracle_cards.jsonl.gz")
+DATA = Path(os.environ.get("MTG_DATA_DIR") or SITE.parent / "mtg-data" / "data")  # shared 17Lands data (mtg-data)
+ORACLE = DATA / "raw" / "scryfall_oracle_cards.jsonl.gz"
 COLORS = "WUBRG"
 SKIP_LAYOUTS = {"token", "double_faced_token", "emblem", "art_series", "vanguard", "scheme", "planar"}
 

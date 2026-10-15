@@ -7,6 +7,9 @@ with onnxruntime-web. Packs are opened by packs.js from each set's MTG Arena col
     python3 serve.py            # http://localhost:8000 (COOP/COEP headers enable WASM threads)
 
 run-locally.html (linked from the page) walks someone new through cloning and running it, for the Live tab.
+about.html summarises the project, links the PickNet, WheelNet, TableNet and deck-strength write-ups, and walks
+through rebuilding everything from mtg-data. The tools find the other repos next to this one (../mtg-data,
+../picknet, ../wheelnet), and the 17Lands data at $MTG_DATA_DIR if it's set.
 
 The Drafter profile picks the context vector PickNet is conditioned on: "typical" is the mean context
 of every 17Lands drafter in the set's test split, "strong" the mean over drafters with a 62%+ win rate
