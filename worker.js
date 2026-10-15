@@ -10,7 +10,9 @@ const sessions = {};
 async function fetchWithProgress(url, progress = true) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
-  const total = +res.headers.get('content-length') || 0;
+  // a compressed response's content-length counts the compressed bytes (GitHub Pages gzips the models), while the
+  // body comes unzipped, so it can't be the total
+  const total = res.headers.get('content-encoding') ? 0 : +res.headers.get('content-length') || 0;
   const reader = res.body.getReader();
   const parts = [];
   let got = 0;

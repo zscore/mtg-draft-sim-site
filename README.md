@@ -162,7 +162,8 @@ Rebuilding:
                                                    # the site runs ../picknet's frahob_freeze.pt: all_d256_ep3 with FRA and HOB fitted in
     python tools/build_data.py [SET ...]           # data/*.json (cards, Scryfall images, collation, context presets, mana facts)
     python tools/mana_facts.py [SET ...]           # just the mana facts in data/*.json, from ../mtg-data's Scryfall oracle dump
-    python tools/export_deck_model.py [SET ...]    # data/deck/*.json, deck models (wheelnet's .venv; ~2 min/set)
+    ../mtg-deck-strength/.venv/bin/python tools/export_deck_model.py [SET ...]
+                                                   # data/deck/*.json, deck models (~2 min/set)
     node tools/verify_deck.mjs [SET ...]           # deck.js vs PyTorch on training decks, plus a timed build
     ../wheelnet/.venv/bin/python tools/export_wheelnet.py SET [checkpoint.pt]
                                                    # model/wheelnet_SET.onnx + data/wheel/SET.json from a WheelNet trained

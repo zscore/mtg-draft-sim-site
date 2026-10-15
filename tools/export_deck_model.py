@@ -1,15 +1,15 @@
-"""Per-set deck models for the deck builder: wheelnet's game-level deck model, retrained and exported.
+"""Per-set deck models for the deck builder: mtg-deck-strength's game-level deck model, retrained and exported.
 
-    python tools/export_deck_model.py [SET ...]      # run with wheelnet's .venv (torch, polars)
+    ../mtg-deck-strength/.venv/bin/python tools/export_deck_model.py [SET ...]   # torch, polars, mtgdata, picknet
 
-The model is deck synergy rounds 3-4's best game-level model (mtg-open-lane-synergy, scripts/deck_synergy_v4.py,
+The model is deck synergy rounds 3-4's best game-level model (mtg-deck-strength, scripts/deck_synergy_v4.py,
 "fm4 nonland" with the deck features and the affinity column):
 
     logit P(win game) = b + ctx . w_ctx + w . x + sum_{i<j} x_i x_j <v_i, v_j> + F(x) . w_F + aff(x) * w_aff
 
   x       the registered deck's card counts, basic lands included
   v       rank-4 pair vectors, nonland cards only (so synergy can't just be the mana base)
-  F(x)    openlane.cardinfo.deck_features: land-count buckets, curve shape, colours / splash, castability,
+  F(x)    mtgdata.cardinfo.deck_features: land-count buckets, curve shape, colours / splash, castability,
           standardised on training games
   aff(x)  the deck's mean pairwise affinity from the set's picknet `pool` model (how much card j in your pool
           raises the odds a human takes card i), standardised; sets without a pool model go without it
@@ -29,15 +29,14 @@ import numpy as np
 import polars as pl
 import torch
 
-SYN = Path(__file__).resolve().parents[2] / "mtg-open-lane-synergy"
-OL = Path(__file__).resolve().parents[2] / "wheelnet"
-sys.path.insert(0, str(SYN / "src"))
-from openlane.cardinfo import DECK_FEATURES, card_info, deck_features  # noqa: E402
-from openlane.data import COLORS, PARQUET, RAW  # noqa: E402
-from openlane.deckstrength import (aligned, covariates, event_split, experience, flag, record_before,  # noqa: E402
-                                   record_onehot)
-from openlane.games import game_path  # noqa: E402
-from openlane.synergy import DeckFM, _train  # noqa: E402
+REPOS = Path(__file__).resolve().parents[2]
+PICKNET = REPOS / "picknet"
+sys.path[:0] = [str(REPOS / "mtg-deck-strength" / "src"), str(REPOS / "mtg-data" / "src"), str(PICKNET / "src")]
+from decks.deckstrength import covariates, event_split, experience, record_before, record_onehot  # noqa: E402
+from decks.synergy import DeckFM, _train  # noqa: E402
+from mtgdata.cardinfo import DECK_FEATURES, card_info, deck_features  # noqa: E402
+from mtgdata.data import COLORS, PARQUET, RAW  # noqa: E402
+from mtgdata.games import aligned, flag, game_path  # noqa: E402
 
 SITE = Path(__file__).resolve().parents[1]
 SETS = ["BLB", "DFT", "DSK", "ECL", "EOE", "FDN", "FIN", "HOB", "LCI", "MKM", "MOM", "MSH", "OTJ", "SOS", "TDM",
@@ -56,10 +55,10 @@ def pool_vectors(set_code: str, names: list[str]):
     """The picknet `pool` model's card vectors, in `names` order: a_i (what a candidate responds to) and e_j (what
     a pool card contributes); affinity S_ij = (<a_i, e_j> + <a_j, e_i>) / 2. None without a pool model. Cards the
     pick data lacks get zero vectors."""
-    path = OL / "results" / f"{set_code}.PremierDraft" / "picknet" / "models" / "pool_d32.pt"
+    path = PICKNET / "results" / f"{set_code}.PremierDraft" / "picknet" / "models" / "pool_d32.pt"
     if not path.exists():
         return None
-    from openlane.picknet import load_model
+    from picknet.model import load_model
     cols = pl.scan_parquet(PARQUET / f"{set_code}.PremierDraft.parquet").collect_schema().names()
     pos = {c[len("pack_card_"):]: i for i, c in enumerate(c for c in cols if c.startswith("pack_card_"))}
     m, _ = load_model(path)

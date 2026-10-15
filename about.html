@@ -114,8 +114,8 @@ git clone https://github.com/zscore/mtg-draft-sim-site.git</code></pre>
     <pre><code>cd picknet
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ../mtg-data -r requirements.txt</code></pre>
-    <p class="note">Do the same in <code>wheelnet</code> (it also needs <code>-e ../picknet</code>) and
-      <code>mtg-deck-strength</code>.</p>
+    <p class="note">Do the same in <code>wheelnet</code> and <code>mtg-deck-strength</code>, adding
+      <code>-e ../picknet</code> to the <code>pip install</code> in both.</p>
 
     <h4>1. Download the data (mtg-data)</h4>
     <p>From any of those environments, inside <code>mtg-data</code>:</p>
@@ -145,10 +145,9 @@ python scripts/train_nn.py NEW         # the WheelNet transformer</code></pre>
     <pre><code>python tools/export_model.py [checkpoint.pt]        # PickNet -> model/picknet.onnx (picknet's environment)
 python tools/build_data.py NEW                      # cards, Scryfall images, collation, mana facts -> data/NEW.json
 ../wheelnet/.venv/bin/python tools/export_wheelnet.py NEW   # WheelNet -> model/wheelnet_NEW.onnx
-python tools/export_deck_model.py NEW               # deck model -> data/deck/NEW.json</code></pre>
-    <p class="note">The deck-model export still imports code from before the deck work moved to mtg-deck-strength.
-      It needs updating to the new repository before it runs again. Until then, sets keep the deck models they have,
-      and a new set gets the PickNet build only.</p>
+../mtg-deck-strength/.venv/bin/python tools/export_deck_model.py NEW   # deck model -> data/deck/NEW.json</code></pre>
+    <p class="note">The deck model needs the set's 17Lands game data (Premier Draft and Sealed games), which comes a
+      little after a set's first draft data. Until then a new set gets the PickNet build only.</p>
     <p>Check the exports against the originals before publishing:</p>
     <pre><code>python tools/make_fixture.py && node tools/verify_js.mjs   # the browser's PickNet vs PyTorch
 node tools/check_wheelnet.mjs NEW                          # the browser's WheelNet inputs vs training
