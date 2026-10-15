@@ -6,6 +6,8 @@ with onnxruntime-web. Packs are opened by packs.js from each set's MTG Arena col
 
     python3 serve.py            # http://localhost:8000 (COOP/COEP headers enable WASM threads)
 
+run-locally.html (linked from the page) walks someone new through cloning and running it, for the Live tab.
+
 The Drafter profile picks the context vector PickNet is conditioned on: "typical" is the mean context
 of every 17Lands drafter in the set's test split, "strong" the mean over drafters with a 62%+ win rate
 (all drafters if a set has 100 or fewer of those). It is one model either way, asked to pick as that

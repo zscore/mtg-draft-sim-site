@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Run It Locally · Draft vs PickNet</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1><a class="home" href="./">Draft vs PickNet</a></h1>
+    <nav class="tabs">
+      <a class="tab" href="./">Back to the drafts</a>
+    </nav>
+  </header>
+
+  <main class="doc">
+    <h2 class="doc-title">Run it on your own computer</h2>
+    <p class="lede">Everything on the website works in your browser: drafting against the bots, sealed pools and the
+      deck builder. Running a copy on your own computer adds the <b>Live</b> tab. It follows your MTG Arena drafts as
+      you make them, shows PickNet's pick and the wheel odds for the pack in hand, and builds a deck from your pool.
+      The website can't do that because browsers don't let websites read files on your computer, and Arena's log is a
+      file on your computer.</p>
+
+    <h3>What you need</h3>
+    <ul>
+      <li><b>Git</b>, to download the site. On a Mac, run <code>git --version</code> in Terminal and it offers to install
+        itself if it's missing. On Windows, get it from <a href="https://git-scm.com/downloads">git-scm.com</a>.</li>
+      <li><b>Python 3.8 or newer</b>. You don't need any Python packages. Macs with the developer tools already have it
+        (try <code>python3 --version</code>). On Windows, get it from <a href="https://www.python.org/downloads/">python.org</a>.</li>
+      <li><b>A recent browser</b>. Chrome or Edge is fastest, because they let PickNet use several CPU threads.</li>
+      <li><b>About 150 MB of disk space</b>. The download includes the models.</li>
+      <li><b>MTG Arena</b> on the same computer, if you want the Live tab.</li>
+    </ul>
+
+    <h3>1. Download it</h3>
+    <p>Open Terminal (Mac) or PowerShell (Windows), go to wherever you keep projects, and run:</p>
+    <pre><code>git clone https://github.com/zscore/mtg-draft-sim-site.git
+cd mtg-draft-sim-site</code></pre>
+
+    <h3>2. Start it</h3>
+    <p>From the <code>mtg-draft-sim-site</code> folder:</p>
+    <pre><code>python3 serve.py</code></pre>
+    <p>On Windows, use <code>py serve.py</code> (or <code>python serve.py</code>). The command prints
+      <code>http://localhost:8000</code>. Open that address in your browser. Leave the terminal window open while you
+      use the site. Press <kbd>Ctrl</kbd>+<kbd>C</kbd> in the terminal to stop it.</p>
+    <p class="note">Use <code>serve.py</code>, not a double-click on <code>index.html</code>. The page doesn't run from a
+      file, and only <code>serve.py</code> can read Arena's log. If port 8000 is taken, pick another port:
+      <code>python3 serve.py 8001</code>.</p>
+
+    <h3>3. Turn on Arena's detailed logs</h3>
+    <p>Arena only writes draft picks to its log when you ask it to. In Arena, go to <b>Options → Account</b>, tick
+      <b>Detailed Logs (Plugin Support)</b>, and restart Arena. You only do this once.</p>
+
+    <h3>4. Draft</h3>
+    <p>Reload <code>http://localhost:8000</code> and a <b>Live</b> tab appears next to Draft and Sealed. Start a draft
+      in Arena and it shows up there with every pack and pick. Older drafts are in the <b>Draft</b> menu: Arena keeps a
+      few weeks of session logs. Click any pick in the table, or use <b>Replay from pick 1</b>, to step back through a
+      draft with <kbd>←</kbd> and <kbd>→</kbd>.</p>
+
+    <h3>Where the drafts come from</h3>
+    <p>The <b>Logs</b> menu on the Live tab picks the source:</p>
+    <dl>
+      <dt>Arena (live)</dt>
+      <dd>Arena's own logs. It follows the draft you're in, and lists older drafts from the session logs Arena keeps
+        for a few weeks.</dd>
+      <dt>Archived logs</dt>
+      <dd>Copies kept by <code>tools/archive_arena_logs.sh</code> (below), for drafts older than Arena keeps.</dd>
+      <dt>Example logs, anonymized</dt>
+      <dd>Scrubbed logs that come with the download, to try the tab without Arena. They hold two finished draft pools
+        but no picks, so they open on the pool and the deck builder. You still need Arena installed for the card
+        names.</dd>
+      <dt>Choose a log file…</dt>
+      <dd>Opens your computer's file dialog, and follows whichever log you pick as it grows. Use it if Arena keeps its
+        log somewhere unusual. The dialog can open behind the browser window.</dd>
+    </dl>
+
+    <h3>Keep your old drafts (Mac, optional)</h3>
+    <p>Arena replaces its main log every time it starts. To keep a copy of every session, run this once:</p>
+    <pre><code>tools/archive_arena_logs.sh --install</code></pre>
+    <p>It then copies the log into <code>~/mtga-log-archive</code> every 15 minutes, in the background, and you'll find
+      those drafts under <b>Archived logs</b>. To stop it, run <code>tools/archive_arena_logs.sh --uninstall</code>.</p>
+
+    <h3>Updating</h3>
+    <p>To get the latest version, stop the server, then run:</p>
+    <pre><code>git pull
+python3 serve.py</code></pre>
+    <p class="note">Always restart <code>serve.py</code> after updating. A server that's still running keeps serving
+      the old version's Live features.</p>
+
+    <h3>If something's wrong</h3>
+    <dl>
+      <dt>There's no Live tab</dt>
+      <dd>The page isn't coming from <code>serve.py</code>. Open <code>http://localhost:8000</code> while
+        <code>serve.py</code> is running, not the file itself and not the website.</dd>
+      <dt>"No MTG Arena log found"</dt>
+      <dd>Arena's log isn't in the usual place. On a Mac that's <code>~/Library/Logs/Wizards Of The Coast/MTGA</code>; on
+        Windows it's <code>%USERPROFILE%\AppData\LocalLow\Wizards Of The Coast\MTGA</code>. Start the server with the
+        folder you use, for example <code>MTGA_LOG_DIR="/path/to/MTGA" python3 serve.py</code>, or in PowerShell
+        <code>$env:MTGA_LOG_DIR="D:\path\to\MTGA"; py serve.py</code>. You can also pick the log with
+        <b>Choose a log file…</b>.</dd>
+      <dt>"Detailed logs are off"</dt>
+      <dd>Turn on Detailed Logs (step 3) and restart Arena.</dd>
+      <dt>The cards have no names</dt>
+      <dd>The server can't find Arena's card database. Point it at the <code>Raw_CardDatabase_*.mtga</code> file in
+        Arena's install folder with <code>MTGA_CARD_DB</code>, the same way as <code>MTGA_LOG_DIR</code>.</dd>
+      <dt>"Address already in use"</dt>
+      <dd>Another program, or another copy of <code>serve.py</code>, has port 8000. Stop it or use another port:
+        <code>python3 serve.py 8001</code>.</dd>
+    </dl>
+
+    <h3>Privacy</h3>
+    <p>Your log stays on your computer. <code>serve.py</code> answers only requests from your own computer, and it
+      only reads Arena's logs, the archive folder, and files you choose in its file dialog. The only thing the page
+      fetches from the internet is card images, from Scryfall.</p>
+  </main>
+
+  <footer>
+    Draft vs PickNet is unofficial Fan Content permitted under the
+    <a href="https://company.wizards.com/en/legal/fancontentpolicy">Fan Content Policy</a>. Not approved/endorsed by
+    Wizards. Portions of the materials used are property of Wizards of the Coast. &copy;Wizards of the Coast LLC.
+    Card images from <a href="https://scryfall.com">Scryfall</a>; draft data from <a href="https://www.17lands.com">17Lands</a>.
+  </footer>
+</body>
+</html>
