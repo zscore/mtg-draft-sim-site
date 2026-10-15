@@ -109,9 +109,17 @@
           <button id="live-next" class="ghost" title="The pick after (→)">Next pick ▶</button>
           <button id="live-close" class="ghost" title="Back to the picks (Esc)">Close</button>
         </div>
-        <p class="live-legend">On each card: PickNet's pick for you (rank and probability), the chance the card comes back
-          8 picks later, and its rank in the set as a first pick. Wheel odds send the pack round the other seven seats many
-          times with PickNet drafting for them.</p>
+        <div class="bar live-legend">
+          <span>On each card: PickNet's pick for you (rank and probability), the chance the card comes back 8 picks later,
+            and its rank in the set as a first pick. On a pick you've made: whether each card came back.</span>
+          <label title="WheelNet: a model trained on 17Lands drafts to predict which passed cards come back, from your whole draft so far. Simulation: the pack sent round the other seven seats many times with PickNet drafting for them. Both: WheelNet / simulation.">Wheel odds
+            <select id="live-wheel">
+              <option value="net">WheelNet</option>
+              <option value="sim">Simulation</option>
+              <option value="both">Both</option>
+            </select>
+          </label>
+        </div>
         <div id="live-pack" class="pack show-model live"></div>
         <div id="live-taken" hidden>
           <div class="bar"><h2>Taken from this pack since you last saw it</h2></div>
@@ -131,7 +139,8 @@
         <div id="live-build-holder"></div>
       </div>
       <div id="live-log-view" hidden>
-        <div class="bar"><h2>Your picks vs PickNet</h2><p>Click a pick to see its pack again, with PickNet's numbers and wheel odds.</p></div>
+        <div class="bar"><h2>Your picks vs PickNet</h2><button id="live-replay" class="ghost" title="Step through the draft from the first pick (← / →)">▶ Replay from pick 1</button>
+          <p>Click a pick to see its pack again, with PickNet's numbers and wheel odds.</p></div>
         <table id="live-log"></table>
       </div>
     </section>

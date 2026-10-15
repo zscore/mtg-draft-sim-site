@@ -1,5 +1,6 @@
 import { Draft, Seat, WheelSim, feeds, choices, sample, rateCards, SEATS, SLOTS } from './draft.js';
 import { newSeed, openPack, seededRng } from './packs.js';
+import { wheelFeeds, wheelOdds, wheelTensors } from './wheelnet.js';
 import { ArenaDrafts, eventSet, isBotDraft, isSealed, mergeDrafts, parseEntry, placeSteps } from './arena.js';
 import { DeckModel, buildDeck, cardValues, deckPerColors, isLand, landCount, manaBase, utilityLands, BASICS } from './deck.js';
 
@@ -24,7 +25,11 @@ worker.onmessage = ({ data: m }) => {
   } else if (m.type === 'result') {
     pending.get(m.id).res(m);
     pending.delete(m.id);
+  } else if (m.type === 'loaded') {
+    modelLoads.get(m.name)?.res();
+    modelLoads.delete(m.name);
   } else if (m.type === 'error') {
+    if (m.name && modelLoads.has(m.name)) { modelLoads.get(m.name).rej(new Error(m.message)); modelLoads.delete(m.name); return; }
     if (pending.has(m.id)) { pending.get(m.id).rej(new Error(m.message)); pending.delete(m.id); }
     status(`Error: ${m.message}`);
   }
@@ -38,6 +43,26 @@ function run(f) {
     worker.postMessage({ type: 'run', id, feeds: f }, [f.idx.buffer, f.cnt.buffer, f.pick.buffer, f.oidx.buffer,
       f.ocnt.buffer, f.ctx.buffer, f.sid.buffer]);
   });
+}
+
+// Another model in the worker, by name: tensors [{name, type, data, dims}] -> {out, ms}.
+function runModel(name, tensors) {
+  return new Promise((res, rej) => {
+    const id = ++nextId;
+    pending.set(id, { res, rej });
+    worker.postMessage({ type: 'run', id, model: name, tensors });
+  });
+}
+
+// A set's WheelNet, once tools/export_wheelnet.py has made one: its data/wheel/{SET}.json, or null.
+const modelLoads = new Map(), wheelNets = {};
+function loadWheelNet(code) {
+  return wheelNets[code] ??= fetch(`data/wheel/${code}.json`).then((r) => (r.ok ? r.json() : null))
+    .then((meta) => meta && new Promise((res, rej) => {
+      modelLoads.set(`wheel:${code}`, { res: () => res(meta), rej });
+      worker.postMessage({ type: 'load', name: `wheel:${code}`, url: new URL(meta.model, location.href).href });
+    }))
+    .catch((e) => { console.warn(`WheelNet for ${code}: ${e.message}`); return null; });
 }
 
 // ---------------------------------------------------------------- state
@@ -907,7 +932,7 @@ async function showDraftBuild(seatIdx) {
 // pick, and the deck builder on your pool. Older drafts come from Arena's session logs, and any pick, old or new, can
 // be looked at again (live.focus: its slot). The tab only appears when serve.py serves the page.
 const live = { drafts: new ArenaDrafts(), files: {}, names: new Map(), codes: [], ranks: new Map(), gen: 0, view: null,
-  history: [], merged: new Map(), which: 'latest', focus: null };
+  history: [], merged: new Map(), which: 'latest', focus: null, nets: {} };
 const POLL_MS = 1000;
 const normName = (n) => n.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const pct = (p) => `${(p * 100).toFixed(p < 0.1 ? 1 : 0)}%`;
@@ -1009,7 +1034,7 @@ function liveState(d, s) {
   })();
   const toId = (g) => { const c = live.names.get(g); return c ? byName.get(normName(c.name)) : undefined; };
   const known = (gs) => gs.map(toId).filter((x) => x !== undefined);
-  d.ui ??= { choices: new Map(), wheel: new Map() };
+  d.ui ??= { choices: new Map(), wheel: new Map(), wnet: new Map() };
   const placed = placeSteps(d, s.n_picks), seat = new Seat(s.pad);
   for (const p of placed) {
     seat.show(p.t, known(p.step.cards));
@@ -1026,11 +1051,18 @@ function liveState(d, s) {
   return { d, s, placed, seat, cur, shown, finished, toId, pool: listed ? known(listed) : seat.pool.slice() };
 }
 
-// "Tue, Oct 13, 08:35 PM" (your time) from a session log's name ("UTC_Log - 10-13-2026 18.35.07.log", in UTC), or "today".
-function draftDate(d) {
+// When a draft happened: the start of its session, from the session log's name ("UTC_Log - 10-13-2026 18.35.07.log",
+// in UTC), or null for one only in this session's Player.log (it's happening now).
+function draftWhen(d) {
   const m = /(\d+)-(\d+)-(\d+) (\d+)\.(\d+)/.exec(d.source || '');
-  if (!m) return 'today';
-  return new Date(Date.UTC(+m[3], m[1] - 1, +m[2], +m[4], +m[5])).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  return m ? new Date(Date.UTC(+m[3], m[1] - 1, +m[2], +m[4], +m[5])) : null;
+}
+
+// "Tue, Oct 13, 08:35 PM" (your time), or "today".
+function draftDate(d) {
+  const when = draftWhen(d);
+  if (!when) return 'today';
+  return when.toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 }
 
 function draftLabel(d) {
@@ -1081,6 +1113,7 @@ async function showLive() {
   }
   const s = await loadSet(code);
   if (stale()) return;
+  if (!(code in live.nets)) loadWheelNet(code).then((meta) => { live.nets[code] = meta; if (mode === 'live') showLive(); });
   const v = live.view = liveState(d, s);
   renderLive(v);
   await ready;
@@ -1089,7 +1122,10 @@ async function showLive() {
     await liveChoices(v, v.shown.t);
     if (stale()) return;
     renderLivePack(v);
-    startWheel(v);
+    await liveWheelNet(v, v.shown);
+    if (stale()) return;
+    renderLivePack(v);
+    if (wheelMode(s) !== 'net') startWheel(v);
   }
   await setRanks(s);
   if (stale()) return;
@@ -1097,6 +1133,7 @@ async function showLive() {
   for (const p of v.placed) {
     if (p.step.taken === null) continue;
     await liveChoices(v, p.t);
+    await liveWheelNet(v, p);
     if (stale()) return;
   }
   renderLiveLog(v);
@@ -1126,6 +1163,45 @@ async function setRanks(s) {
   return live.ranks.get(key);
 }
 
+// The pick the wheel odds assume you make at a step: the one you made, or else PickNet's top choice; and the next
+// best, which the odds for that card itself assume instead.
+function yourTakes(v, p, ch) {
+  const first = (p.step.taken === null ? undefined : v.toId(p.step.taken)) ?? ch[0].card;
+  return [first, ch.find((x) => x.card !== first)?.card ?? first];
+}
+
+// Which wheel odds to show: the viewer's choice, or the simulation where the set has no WheelNet.
+const wheelMode = (s) => (live.nets[s.code] ? $('#live-wheel').value : 'sim');
+
+// WheelNet's draft context: the drafter profile's average (rank and skill, for a model that reads them), with days
+// into the format from the draft's date, counted from the set's first draft as in training.
+function wheelCtx(meta, d) {
+  const c = (meta.ctx[$('#skill').value] ?? meta.ctx.typical).slice();
+  if (meta.time) {
+    const days = Math.max(0, ((draftWhen(d) ?? new Date()) - meta.time.start) / 864e5);
+    c[meta.time.at] = days / 30;
+    c[meta.time.at + 1] = Math.log1p(days) / Math.log1p(30);
+  }
+  return c;
+}
+
+// WheelNet's odds for the pack at step p (Map card -> P(wheel)), or null: no WheelNet for the set, or a pack that
+// won't come back. Cached per draft. One run of two drafts: you take yourTakes' first card, or its second.
+async function liveWheelNet(v, p) {
+  const { d, s, seat } = v, key = choiceKey(p.t), ch = d.ui.choices.get(key);
+  if (!ch || p.k + SEATS >= s.n_picks) return null;
+  const meta = await loadWheelNet(s.code);
+  if (!meta) return null;
+  if (!d.ui.wnet.has(key)) {
+    const takes = yourTakes(v, p, ch), f = wheelFeeds(meta, seat, p.t, takes, wheelCtx(meta, d));
+    const out = (await runModel(`wheel:${s.code}`, wheelTensors(meta, f))).out;
+    const odds = wheelOdds(meta, f, out, p.t, 0);
+    odds.set(takes[0], wheelOdds(meta, f, out, p.t, 1).get(takes[0]) ?? null);
+    d.ui.wnet.set(key, odds);
+  }
+  return d.ui.wnet.get(key);
+}
+
 // Wheel odds for the pack in hand, in the background; one simulation at a time per draft (they share its tables).
 function startWheel(v) {
   const { d, s, shown: cur, seat } = v, step = cur.step;
@@ -1134,9 +1210,7 @@ function startWheel(v) {
   d.ui.wheelFor = step;
   d.ui.sim ??= new WheelSim(s, (f) => run(f).then((r) => r.logits));
   const sim = d.ui.sim, cancelled = () => live.view?.shown?.step !== step;
-  // your picks: the one you made, if this is one you've made; PickNet's top two otherwise
-  const took = step.taken === null ? undefined : v.toId(step.taken);
-  const mine = took === undefined ? ch.slice(0, 2).map((x) => x.card) : [took, ch.find((x) => x.card !== took)?.card ?? took];
+  const mine = yourTakes(v, cur, ch);
   let done = 0, total = 0;
   const t0 = performance.now();
   d.ui.simQueue = (d.ui.simQueue ?? Promise.resolve()).then(() => {
@@ -1222,20 +1296,30 @@ function renderLivePack(v) {
     pack.replaceChildren(...els, ...unknown);
     renderTaken(v);
   }
-  const ch = d.ui.choices.get(choiceKey(cur.t)) ?? [], odds = d.ui.wheel.get(cur.t);
+  const ch = d.ui.choices.get(choiceKey(cur.t)) ?? [], sim = d.ui.wheel.get(cur.t), net = d.ui.wnet.get(choiceKey(cur.t));
   const ranks = live.ranks.get(`${s.code}:${$('#skill').value}`), nRanked = ranks?.size;
   const wheels = cur.k + SEATS < s.n_picks, took = cur.step.taken === null ? undefined : v.toId(cur.step.taken);
+  const wm = wheelMode(s), odds = wm === 'sim' ? sim : net;
+  const fmt = (m, c) => (!m ? '…' : typeof m.get(c) === 'number' ? pct(m.get(c)) : '?');
+  // a pick you've made whose pack came back: what did
+  const back = cur !== v.cur && wheels ? seat.seen[cur.t + SEATS] : undefined;
+  $('#live-wheel').value = wm;
+  $('#live-wheel').disabled = !live.nets[s.code];
+  $('#live-wheel').title = live.nets[s.code] ? $('#live-wheel').title : `No WheelNet for ${s.code} yet (tools/export_wheelnet.py makes one), so the wheel odds come from the simulation.`;
   const rankOf = new Map(ch.map((x, i) => [x.card, i]));
   for (const [card, el] of live.packEls) {
     const r = rankOf.get(card), o = el.querySelector('.model'), name = s.cards[card].name;
     el.classList.toggle('top1', r === 0);
     el.classList.toggle('selected', card === took);
     const w = odds?.get(card), sr = ranks?.get(card);
-    const wheel = !wheels ? '' : odds ? (w === null || w === undefined ? 'wheel ?' : `wheels ${pct(w)}`) : 'wheel …';
+    const wheel = !wheels ? '' : wm === 'both' ? `wheel ${fmt(net, card)} / ${fmt(sim, card)}` : `wheels ${fmt(odds, card)}`;
+    const came = back && card !== took ? back.includes(card) : undefined;
     o.innerHTML = (r === undefined ? 'PickNet …' : `#${r + 1} · ${pct(ch[r].p)}<div class="meter"><i style="width:${(ch[r].p * 100).toFixed(1)}%"></i></div>`) +
-      `<div class="sub"><span class="wheel${w >= 0.5 ? ' likely' : ''}">${wheel}</span><span>${sr ? `set #${sr}` : ''}</span></div>`;
+      `<div class="sub"><span class="wheel${w >= 0.5 ? ' likely' : ''}">${wheel}</span><span>${sr ? `set #${sr}` : ''}</span></div>` +
+      (came === undefined ? '' : `<div class="sub"><span class="${came ? 'back' : 'gone'}">${came ? '✓ came back' : '✗ taken'}</span></div>`);
+    const said = (m, who) => (wheels && typeof m?.get(card) === 'number' ? `${who}: comes back ${(m.get(card) * 100).toFixed(0)}% of the time if you pass it` : '');
     el.title = [card === took ? `${name} (you took it)` : name, r === undefined ? '' : `PickNet's #${r + 1} for you (${(ch[r].p * 100).toFixed(1)}%)`,
-      wheels && typeof w === 'number' ? `comes back ${(w * 100).toFixed(0)}% of the time if you pass it` : '',
+      said(net, 'WheelNet'), said(sim, 'simulation'), came === undefined ? '' : came ? 'it came back' : 'it was taken',
       sr ? `#${sr} of ${nRanked} in ${s.code} as a first pick` : ''].filter(Boolean).join(' · ');
   }
   for (const x of ch) pack.append(live.packEls.get(x.card)); // best first
@@ -1268,18 +1352,30 @@ function renderLiveLog(v) {
   if (!rows.length) return;
   const esc = (x) => x.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   let agree = 0, scored = 0;
+  const calls = { back: [], gone: [] }; // WheelNet's odds for the cards you passed, by what happened to them
   const html = rows.map((p) => {
     const card = toId(p.step.taken), ch = d.ui.choices.get(choiceKey(p.t));
     const r = ch ? ch.findIndex((x) => x.card === card) : -1;
     if (ch && r >= 0) { scored++; if (r === 0) agree++; }
+    // the pack 8 picks later: how many came back, and the best of them by PickNet's read of this pick
+    const back = p.k + SEATS < s.n_picks ? v.seat.seen[p.t + SEATS] : undefined, net = d.ui.wnet.get(choiceKey(p.t));
+    let came = '';
+    if (back && ch) {
+      const best = ch.find((x) => x.card !== card && back.includes(x.card));
+      came = `${back.length} back${best ? ` · best ${esc(s.cards[best.card].name)}${net?.get(best.card) == null ? '' : ` (WheelNet ${pct(net.get(best.card))})`}` : ''}`;
+      if (net) for (const [c, q] of net) if (c !== card && q !== null) calls[back.includes(c) ? 'back' : 'gone'].push(q);
+    }
     const cells = [`P${p.round + 1}p${p.k + 1}`, esc(s.cards[card].name),
       !ch ? '…' : r < 0 ? '—' : `#${r + 1} (${(ch[r].p * 100).toFixed(0)}%)`,
-      !ch ? '…' : r === 0 ? '—' : `${esc(s.cards[ch[0].card].name)} (${(ch[0].p * 100).toFixed(0)}%)`];
+      !ch ? '…' : r === 0 ? '—' : `${esc(s.cards[ch[0].card].name)} (${(ch[0].p * 100).toFixed(0)}%)`, came];
     const cls = [r === 0 ? 'agree' : '', v.shown === p ? 'focus' : ''].join(' ').trim();
     return `<tr data-t="${p.t}" class="${cls}">${cells.map((c) => `<td>${c}</td>`).join('')}</tr>`;
   }).join('');
-  $('#live-log').innerHTML = `<caption>You took PickNet's top choice on ${agree} of ${scored} picks.</caption>` +
-    '<tr><th>Pick</th><th>You took</th><th>PickNet\'s rank</th><th>PickNet\'s top choice</th></tr>' + html;
+  const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+  const graded = calls.back.length && calls.gone.length ? ` WheelNet gave the cards you passed that came back ${pct(mean(calls.back))} on average, ` +
+    `and the ones that were taken ${pct(mean(calls.gone))} (${calls.back.length + calls.gone.length} cards).` : '';
+  $('#live-log').innerHTML = `<caption>You took PickNet's top choice on ${agree} of ${scored} picks.${graded}</caption>` +
+    '<tr><th>Pick</th><th>You took</th><th>PickNet\'s rank</th><th>PickNet\'s top choice</th><th>Came back</th></tr>' + html;
   for (const tr of $('#live-log').querySelectorAll('tr[data-t]')) tr.onclick = () => liveFocus(+tr.dataset.t, true);
 }
 
@@ -1396,6 +1492,12 @@ async function init() {
   $('#live-prev').onclick = () => liveStep(-1);
   $('#live-next').onclick = () => liveStep(1);
   $('#live-close').onclick = () => liveFocus(null);
+  $('#live-replay').onclick = () => live.view?.placed.length && liveFocus(live.view.placed[0].t, true);
+  $('#live-wheel').value = pref.get('wheel', 'net');
+  $('#live-wheel').onchange = () => {
+    pref.set('wheel', $('#live-wheel').value);
+    if (live.view?.shown) { renderLivePack(live.view); if (wheelMode(live.view.s) !== 'net') startWheel(live.view); }
+  };
   $('#export-csv').onclick = exportCsv;
   $('#export-jsonl').onclick = exportJsonl;
   document.addEventListener('keydown', (e) => {

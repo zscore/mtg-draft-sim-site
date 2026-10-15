@@ -1,6 +1,6 @@
-"""Per-set deck models for the deck builder: mtg-open-lane's game-level deck model, retrained and exported.
+"""Per-set deck models for the deck builder: wheelnet's game-level deck model, retrained and exported.
 
-    python tools/export_deck_model.py [SET ...]      # run with mtg-open-lane's .venv (torch, polars)
+    python tools/export_deck_model.py [SET ...]      # run with wheelnet's .venv (torch, polars)
 
 The model is deck synergy rounds 3-4's best game-level model (mtg-open-lane-synergy, scripts/deck_synergy_v4.py,
 "fm4 nonland" with the deck features and the affinity column):
@@ -30,7 +30,7 @@ import polars as pl
 import torch
 
 SYN = Path("/Users/zblanton/Documents/repos/mtg-open-lane-synergy")
-OL = Path("/Users/zblanton/Documents/repos/mtg-open-lane")
+OL = Path("/Users/zblanton/Documents/repos/wheelnet")
 sys.path.insert(0, str(SYN / "src"))
 from openlane.cardinfo import DECK_FEATURES, card_info, deck_features  # noqa: E402
 from openlane.data import COLORS, PARQUET, RAW  # noqa: E402

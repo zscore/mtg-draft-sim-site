@@ -31,22 +31,31 @@ Served by serve.py, the page gets a Live tab that follows your Arena draft as yo
 from Arena's own card database. The log is only served to this machine. On GitHub Pages there is no log
 to read, so the tab stays hidden. For the pack in hand it shows:
 - PickNet's pick for you: its rank and probability for each card, given your whole draft so far.
-- Wheel odds: the chance a card comes back 8 picks later if you pass it (draft.js WheelSim). The pack goes
-  round the other seven seats 48 times. Each seat is a stand-in drafter: a seat from a few simulated tables of
-  PickNet drafting against itself, kept a few picks ahead of yours, picking the way a human would (sampled).
-  The odds assume you take PickNet's top card, or its second when the card is the top one.
+- Wheel odds: the chance a card comes back 8 picks later if you pass it, from WheelNet, the simulation, or both
+  (the Wheel odds menu). Both assume you take the card you took, or PickNet's top card when you haven't
+  picked yet; a card's own odds assume you take the next best instead.
+  - WheelNet (../wheelnet, run by wheelnet.js) is trained on 17Lands drafts to predict which passed cards come
+    back, from your whole draft so far. It needs a model exported for the set (below); without one the menu is
+    off and the odds come from the simulation.
+  - The simulation (draft.js WheelSim) sends the pack round the other seven seats 48 times. Each seat is a
+    stand-in drafter: a seat from a few simulated tables of PickNet drafting against itself, kept a few picks
+    ahead of yours, picking the way a human would (sampled).
 - Each card's first-pick rank in the set (rateCards over the whole set).
 
 Below the pack are your picks, what the other seats took from a pack since you last saw it, and PickNet's
-choice next to each of your picks. Clicking a pick in that table brings its pack back up, with PickNet's numbers,
-the wheel odds and the card you took outlined. ◀ / ▶ (or the arrow keys) step through the draft.
+choice next to each of your picks. Clicking a pick in that table (or Replay from pick 1) brings its pack back up,
+with PickNet's numbers, the wheel odds and the card you took outlined. For a pick whose pack came back, each card
+also says whether it did, and the table lists how many came back and the best of them. The table's caption grades
+WheelNet on the draft: its average odds for the cards that came back against those for the ones that were taken.
+◀ / ▶ (or the arrow keys) step through the draft. The deck builder opens on your pool when the draft ends, or on
+request before then.
 
 The Draft menu lists your older drafts too. Arena keeps a log per session for a few weeks (UTC_Log - *.log in
 MTGA_Data/Logs/Logs, next to its card database), and serve.py reads those as well, keeping only the draft
 messages (about 1 MB from a few weeks of logs). If Arena restarted mid-draft, the draft is put back together
-from both sessions, and the pool Arena lists at each login is matched to the draft it came from. The deck builder opens on your pool when the draft ends, or on request
-before then. An event you're still playing that Arena lists at login (a draft whose picks aren't in the log,
-or sealed) shows its pool for building. arena.js parses the log: Premier and Traditional Draft
+from both sessions, and the pool Arena lists at each login is matched to the draft it came from. An event
+you're still playing that Arena lists at login (a draft whose picks aren't in the log, or sealed) shows its pool
+for building. arena.js parses the log: Premier and Traditional Draft
 (Draft.Notify, EventPlayerDraftMakePick, LogBusinessEvents), Quick Draft (BotDraftDraftStatus/Pick), and
 event pools (CardPool). In Quick Draft the other seats are Arena's bots, not the humans PickNet learned
 from, so the wheel odds are rougher there.
@@ -78,7 +87,7 @@ taps for, enters tapped, ramp, and landcycling.
 ## Deck builder
 
 Sealed pools, and every seat's picks once a draft ends, get a deck builder driven by a deck model:
-mtg-open-lane's best game-level model from the deck synergy work (mtg-open-lane-synergy, rounds 3-4),
+the best game-level model from the deck synergy work in mtg-deck-strength (rounds 3-4),
 retrained per set by tools/export_deck_model.py and run in deck.js.
 
     logit P(win game) = base + w.x + sum_{i<j} x_i x_j <v_i, v_j> + F(x).w_F + aff(x) * w_aff
@@ -136,8 +145,12 @@ Rebuilding:
                                                    # the site runs ../picknet's frahob_freeze.pt: all_d256_ep3 with FRA and HOB fitted in
     python tools/build_data.py [SET ...]           # data/*.json (cards, Scryfall images, collation, context presets, mana facts)
     python tools/mana_facts.py [SET ...]           # just the mana facts in data/*.json, from ../mtg-data's Scryfall oracle dump
-    python tools/export_deck_model.py [SET ...]    # data/deck/*.json, deck models (mtg-open-lane's .venv; ~2 min/set)
+    python tools/export_deck_model.py [SET ...]    # data/deck/*.json, deck models (wheelnet's .venv; ~2 min/set)
     node tools/verify_deck.mjs [SET ...]           # deck.js vs PyTorch on training decks, plus a timed build
+    ../wheelnet/.venv/bin/python tools/export_wheelnet.py SET [checkpoint.pt]
+                                                   # model/wheelnet_SET.onnx + data/wheel/SET.json from a WheelNet trained
+                                                   # for SET, per-set or multi-set (default: its newest wheelnet*.pt)
+    node tools/check_wheelnet.mjs SET              # wheelnet.js's inputs vs training's, on the set's test drafts
     npm install && npm run vendor                  # vendor/ort/ (onnxruntime-web WASM runtime)
     python tools/make_fixture.py && node tools/verify_js.mjs   # replay real drafts through draft.js + ONNX vs PyTorch
     node tools/sim_js.mjs OTJ 4                    # one 8-bot draft in Node: timing and seat colours

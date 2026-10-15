@@ -1,5 +1,5 @@
 // Draft engine: 8 seats, 3 packs, and the PickNet input tokens each seat has seen so far.
-// Layout matches mtg-open-lane's picks_all shards: 3 rounds x 15 pick slots (slots past a set's pack
+// Layout matches wheelnet's picks_all shards: 3 rounds x 15 pick slots (slots past a set's pack
 // size stay empty), up to 15 distinct cards per pack token set, up to 8 "taken by the others" tokens.
 
 import { openPack } from './packs.js';

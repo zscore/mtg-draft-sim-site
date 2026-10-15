@@ -1,4 +1,4 @@
-// Deck model and deck builder. The model is mtg-open-lane's game-level deck model (tools/export_deck_model.py):
+// Deck model and deck builder. The model is wheelnet's game-level deck model (tools/export_deck_model.py):
 //   logit P(win) = base + w.x + sum_{i<j} x_i x_j <v_i, v_j> + F(x).wF + aff(x) * wAff
 // with x the deck's card counts (basics included), v rank-4 pair vectors between nonland cards, F the deck
 // features of openlane.cardinfo.deck_features (land count, curve, colours, castability) and aff the deck's mean
